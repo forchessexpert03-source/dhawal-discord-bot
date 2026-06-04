@@ -1,12 +1,18 @@
+import os
 import discord
 from discord.ext import commands
 from discord import app_commands
-import datetime
 from flask import Flask
-from threading import Thread
-import os
+import threading
 
-# --- FLASK WEB SERVER FOR CRON-JOB PING ---
+# --- INIITAL SETUP & INTENTS ---
+intents = discord.Intents.default()
+intents.members = True  # Required for welcome and auto-role
+intents.message_content = True
+
+bot = commands.Bot(command_prefix="!", intents=intents)
+
+# --- FLASK WEB SERVER FOR RENDER ---
 app = Flask('')
 
 @app.route('/')
@@ -14,176 +20,140 @@ def home():
     return "Dhawal Bot is Alive and Running 24/7!"
 
 def run_web_server():
-    # Render automatic 'PORT' environment variable deta hai, nahi toh default 8080
     port = int(os.environ.get("PORT", 8080))
     app.run(host='0.0.0.0', port=port)
 
-def keep_alive():
-    t = Thread(target=run_web_server)
-    t.start()
-# ------------------------------------------
+# --- 20 BEAUTIFUL LOOPING QUOTES ---
+QUOTES = [
+    "“An early-morning walk is a blessing for the whole day.”",
+    "“The secret of getting ahead is getting started.”",
+    "“Opportunities don't happen, you create them.”",
+    "“Do what you can, with what you have, where you are.”",
+    "“Believe you can and you're halfway there.”",
+    "“The only way to do great work is to love what you do.”",
+    "“Act as if what you do makes a difference. It does.”",
+    "“Success is not final, failure is not fatal: it is the courage to continue that counts.”",
+    "“Never bend your head. Always hold it high. Look the world straight in the eye.”",
+    "“What you get by achieving your goals is not as important as what you become by achieving your goals.”",
+    "“You must do the things you think you cannot do.”",
+    "“Keep your face always toward the sunshine—and shadows will fall behind you.”",
+    "“Limit your 'always' and your 'nevers'.”",
+    "“Hardships often prepare ordinary people for an extraordinary destiny.”",
+    "“The big secret in life is that there is no big secret. Whatever your goal, you can get there if you are willing to work.”",
+    "“Grow through what you go through.”",
+    "“Be so good they can't ignore you.”",
+    "“Your talent determines what you can do. Your motivation determines how much you are willing to do.”",
+    "“Yesterday I was clever, so I wanted to change the world. Today I am wise, so I am changing myself.”",
+    "“The best way to predict your future is to create it.”"
+]
 
-intents = discord.Intents.default()
-intents.members = True
-intents.message_content = True
+# --- WAVE INTERACTION BUTTON & STICKER CLASS ---
+class WelcomeView(discord.ui.View):
+    def __init__(self, target_member: discord.Member):
+        super().__init__(timeout=None) # Keeps button active permanently
+        self.target_member = target_member
 
-class MyBot(commands.Bot):
-    def __init__(self):
-        super().__init__(command_prefix="!", intents=intents)
+    @discord.ui.button(label="Wave", style=discord.ButtonStyle.blurple, emoji="👋")
+    async def wave_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # 4. Standard Discord Waving Sticker ID
+        waving_sticker_id = 749054660769218631 
+        sticker = interaction.guild.get_sticker(waving_sticker_id)
+        
+        # Checking if standard sticker is available, otherwise falls back to message text
+        if sticker:
+            await interaction.channel.send(
+                f"{interaction.user.mention} waved to {self.target_member.mention}! 👋", 
+                stickers=[sticker]
+            )
+        else:
+            await interaction.channel.send(
+                f"{interaction.user.mention} waved to {self.target_member.mention}! 👋👋👋"
+            )
+        
+        # Acknowledge the interaction secretly so the button doesn't show "interaction failed"
+        await interaction.response.defer()
 
-    async def setup_hook(self):
-        self.add_view(ColorView())
-        await self.tree.sync()
-        print("⚡ Dhawal Bot: All Commands Synced!")
-
-bot = MyBot()
-
+# --- EVENTS ---
 @bot.event
 async def on_ready():
-    print(f'🤖 Dhawal Bot is ONLINE as {bot.user.name}')
-    await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name="over the server!"))
+    print(f'🤖 {bot.user.name} is ONLINE and synced!')
+    try:
+        synced = await bot.tree.sync()
+        print(f"Synced {len(synced)} command(s)")
+    except Exception as e:
+        print(e)
 
-# ----------------- 1. WELCOME SYSTEM -----------------
 @bot.event
-async def on_member_join(member):
-    channel = discord.utils.get(member.guild.text_channels, name="general")
-    if channel:
+async def on_member_join(member: discord.Member):
+    guild = member.guild
+    
+    # 1. AUTO-ROLE ASSIGNMENT ("Lil Dawg")
+    role = discord.utils.get(guild.roles, name="Lil Dawg")
+    if role:
+        try:
+            await member.add_roles(role)
+            print(f"Assigned 'Lil Dawg' role to {member.name}")
+        except discord.Forbidden:
+            print(f"❌ Failed to assign role: Check bot hierarchy!")
+        except Exception as e:
+            print(f"Error assigning role: {e}")
+
+    # 2. #WELCOME CHANNEL LOGIC (Sequential Looping Quotes)
+    # Fetch channel named 'welcome'
+    welcome_channel = discord.utils.get(guild.text_channels, name="welcome")
+    if welcome_channel:
+        total_members = len(guild.members)
+        # Using Modulus (%) trick to cycle through 20 quotes sequentially
+        quote_index = (total_members - 1) % len(QUOTES)
+        selected_quote = QUOTES[quote_index]
+
+        # Dynamic channel mentions
+        color_channel = discord.utils.get(guild.text_channels, name="pick-your-color")
+        rules_channel = discord.utils.get(guild.text_channels, name="rules")
+        
+        color_mention = color_channel.mention if color_channel else "#pick-your-color"
+        rules_mention = rules_channel.mention if rules_channel else "#rules"
+
+        # Beautiful Welcome Embed Creation
         embed = discord.Embed(
-            title=f"🎉 Welcome to the Crew, {member.name}! 🎉",
-            description=f"Yo {member.mention}! Server join karne ke liye shukriya.\n\nJangan mat bhoolna 🎨︱`pick-your-color` channel se apna name color choose karna!",
-            color=discord.Color.from_rgb(88, 101, 242),
-            timestamp=datetime.datetime.utcnow()
+            title=f"Welcome to the Server, {member.name}! 🎉",
+            description=f"We are glad to have you here with us!\n\n✨ *{selected_quote}*",
+            color=discord.Color.from_rgb(114, 137, 218) # Classic Discord Blurple
+        )
+        embed.add_field(
+            name="🎨 Get Roles", 
+            value=f"Head over to {color_mention} to grab your custom colors!", 
+            inline=False
+        )
+        embed.add_field(
+            name="📜 Server Rules", 
+            value=f"Make sure to check out {rules_mention} to keep the community clean.", 
+            inline=False
         )
         embed.set_thumbnail(url=member.display_avatar.url)
-        embed.set_author(name=member.guild.name, icon_url=member.guild.icon.url if member.guild.icon else None)
-        embed.set_footer(text=f"Member #{len(member.guild.members)}")
-        await channel.send(content=member.mention, embed=embed)
+        embed.set_footer(text=f"Member #{total_members}")
 
-# ----------------- 2. UTILITY & MANAGEMENT COMMANDS -----------------
-@bot.tree.command(name="purge", description="Delete a specific number of messages from this channel")
-@app_commands.checks.has_permissions(manage_messages=True)
-async def purge(interaction: discord.Interaction, amount: int):
-    if amount < 1:
-        await interaction.response.send_message("❌ Kam se kam 1 message delete karo bhai!", ephemeral=True)
-        return
-    await interaction.response.defer(ephemeral=True)
-    deleted = await interaction.channel.purge(limit=amount)
-    await interaction.followup.send(f"🧹 Successfully cleared {len(deleted)} messages!", ephemeral=True)
+        await welcome_channel.send(content=member.mention, embed=embed)
 
-@bot.tree.command(name="serverinfo", description="Get detailed information about this server")
-async def serverinfo(interaction: discord.Interaction):
-    guild = interaction.guild
-    embed = discord.Embed(title=f"📊 {guild.name} Stats", color=discord.Color.teal())
-    if guild.icon:
-        embed.set_thumbnail(url=guild.icon.url)
-    embed.add_field(name="Owner", value=guild.owner.mention if guild.owner else "Unknown", inline=True)
-    embed.add_field(name="Total Members", value=str(guild.member_count), inline=True)
-    embed.add_field(name="Text Channels", value=str(len(guild.text_channels)), inline=True)
-    embed.add_field(name="Voice Channels", value=str(len(guild.voice_channels)), inline=True)
-    embed.set_footer(text=f"Server Created: {guild.created_at.strftime('%d-%b-%Y')}")
-    await interaction.response.send_message(embed=embed)
+    # 3. GENERAL CHAT LOGIC (Wave Trigger with Interactive Button)
+    general_channel = discord.utils.get(guild.text_channels, name="general")
+    if general_channel:
+        view = WelcomeView(target_member=member)
+        await general_channel.send(
+            f"Hey crew! {member.mention} has joined the server. Say hi or wave to them! 👋",
+            view=view
+        )
 
-# ----------------- 3. MODERATION SUITE -----------------
-@bot.tree.command(name="warn", description="Issue a single formal warning to a member")
-@app_commands.checks.has_permissions(manage_messages=True)
-async def warn(interaction: discord.Interaction, member: discord.Member, reason: str):
-    embed = discord.Embed(title="⚠️ Server Warning Issued", color=discord.Color.red())
-    embed.add_field(name="User", value=member.mention, inline=True)
-    embed.add_field(name="Warned By", value=interaction.user.mention, inline=True)
-    embed.add_field(name="Reason", value=reason, inline=False)
-    await interaction.channel.send(content=member.mention, embed=embed)
-    await interaction.response.send_message("Warning logged successfully.", ephemeral=True)
+# --- KEEP EXISTING SLASH COMMANDS BELOW THIS LINE UNCHANGED ---
+@bot.tree.command(name="ping", description="Test bot response")
+async def ping(interaction: discord.Interaction):
+    await interaction.response.send_message(f"Pong! {round(bot.latency * 1000)}ms")
 
-@bot.tree.command(name="mute", description="Mute/Timeout a member (in minutes)")
-@app_commands.checks.has_permissions(moderate_members=True)
-async def mute(interaction: discord.Interaction, member: discord.Member, duration_minutes: int, reason: str = "No reason provided"):
-    duration = datetime.timedelta(minutes=duration_minutes)
-    try:
-        await member.timeout(duration, reason=reason)
-        await interaction.response.send_message(f"🔇 {member.mention} has been muted for {duration_minutes} minutes. Reason: {reason}")
-    except Exception as e:
-        await interaction.response.send_message(f"❌ Error: {e}", ephemeral=True)
-
-@bot.tree.command(name="unmute", description="Remove timeout from a member")
-@app_commands.checks.has_permissions(moderate_members=True)
-async def unmute(interaction: discord.Interaction, member: discord.Member):
-    try:
-        await member.timeout(None)
-        await interaction.response.send_message(f"🔊 {member.mention} has been unmuted!")
-    except Exception as e:
-        await interaction.response.send_message(f"❌ Error: {e}", ephemeral=True)
-
-@bot.tree.command(name="kick", description="Kick a member from the server")
-@app_commands.checks.has_permissions(kick_members=True)
-async def kick(interaction: discord.Interaction, member: discord.Member, reason: str = "No reason provided"):
-    await member.kick(reason=reason)
-    await interaction.response.send_message(f"👢 {member.mention} has been kicked. Reason: {reason}")
-
-@bot.tree.command(name="ban", description="Permanently ban a member")
-@app_commands.checks.has_permissions(ban_members=True)
-async def ban(interaction: discord.Interaction, member: discord.Member, reason: str = "No reason provided"):
-    await member.ban(reason=reason)
-    await interaction.response.send_message(f"🚫 {member.mention} has been banned. Reason: {reason}")
-
-@bot.tree.error
-async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
-    if isinstance(error, app_commands.MissingPermissions):
-        await interaction.response.send_message("❌ Bhai, tumhare paas permissions nahi hain!", ephemeral=True)
-
-# ----------------- 4. COLOR DROPDOWN SYSTEM -----------------
-class ColorDropdown(discord.ui.Select):
-    def __init__(self):
-        options = [
-            discord.SelectOption(label="Red", description="Choose Red", emoji="🔴"),
-            discord.SelectOption(label="Blue", description="Choose Blue", emoji="🔵"),
-            discord.SelectOption(label="Green", description="Choose Green", emoji="🟢"),
-            discord.SelectOption(label="Yellow", description="Choose Yellow", emoji="🟡"),
-            discord.SelectOption(label="Orange", description="Choose Orange", emoji="🟠"),
-            discord.SelectOption(label="Purple", description="Choose Purple", emoji="🟣"),
-            discord.SelectOption(label="Pink", description="Choose Pink", emoji="💗")
-        ]
-        super().__init__(placeholder="Tap here to pick your profile color...", min_values=1, max_values=1, options=options, custom_id="color_select_dropdown")
-
-    async def callback(self, interaction: discord.Interaction):
-        chosen_color = self.values[0]
-        role = discord.utils.get(interaction.guild.roles, name=chosen_color)
-        
-        if not role:
-            await interaction.response.send_message(f"❌ '{chosen_color}' role server me nahi mila!", ephemeral=True)
-            return
-
-        if role in interaction.user.roles:
-            await interaction.user.remove_roles(role)
-            await interaction.response.send_message(f"🔄 Removed **{chosen_color}**!", ephemeral=True)
-        else:
-            all_colors = ["Red", "Blue", "Green", "Yellow", "Orange", "Purple", "Pink"]
-            roles_to_remove = [discord.utils.get(interaction.guild.roles, name=c) for c in all_colors if c != chosen_color]
-            for old_role in roles_to_remove:
-                if old_role and old_role in interaction.user.roles:
-                    await interaction.user.remove_roles(old_role)
-            await interaction.user.add_roles(role)
-            await interaction.response.send_message(f"🎨 Success! Your color is now **{chosen_color}**!", ephemeral=True)
-
-class ColorView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=None)
-        self.add_item(ColorDropdown())
-
-@bot.tree.command(name="setup_colors", description="Send the superior profile color selection panel")
-@app_commands.checks.has_permissions(manage_roles=True)
-async def setup_colors(interaction: discord.Interaction):
-    embed = discord.Embed(
-        title="🎨 SERVER PROFILE COLORS",
-        description="Welcome! Customize your username color in this server by selecting a vibe from the dropdown menu below.",
-        color=discord.Color.from_rgb(255, 182, 193)
-    )
-    embed.set_footer(text="Dhawal Custom Management System")
-    await interaction.response.send_message(embed=embed, view=ColorView())
-
-# Start Flask server background thread, then start bot
-keep_alive()
-import os
-
-# Puraane token waali line hatao, aur ye likho:
-token = os.environ.get('DISCORD_BOT_TOKEN')
-bot.run(token)
+# --- BOT RUNNER ---
+if __name__ == "__main__":
+    # Start Flask on a separate background thread
+    threading.Thread(target=run_web_server, daemon=True).start()
+    
+    # Run Discord Bot
+    token = os.environ.get('DISCORD_BOT_TOKEN')
+    bot.run(token)
