@@ -56,20 +56,20 @@ class WelcomeView(discord.ui.View):
 
     @discord.ui.button(label="Wave", style=discord.ButtonStyle.blurple, emoji="👋")
     async def wave_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # INSTANTLY defer to make sure Discord registers the click under 3 seconds
+        # INSTANTLY defer to absolutely eliminate "Interaction Failed"
         await interaction.response.defer()
         
-        # Exact Sticker ID parsed from your Discord URL
         waving_sticker_id = 1512147790975865043 
-        sticker = interaction.guild.get_sticker(waving_sticker_id)
         
-        if sticker:
+        # Creating sticker object directly from ID for absolute reliability
+        try:
+            sticker = await interaction.guild.fetch_sticker(waving_sticker_id)
             await interaction.channel.send(
                 f"{interaction.user.mention} waved to {self.target_member.mention}! 👋", 
                 stickers=[sticker]
             )
-        else:
-            # Safe text fallback if the bot faces latency while fetching the sticker asset
+        except Exception:
+            # Safe text fallback if Discord API takes too long to load the sticker asset
             await interaction.channel.send(
                 f"{interaction.user.mention} waved to {self.target_member.mention}! 👋👋👋"
             )
@@ -106,7 +106,6 @@ async def on_member_join(member: discord.Member):
         quote_index = (total_members - 1) % len(QUOTES)
         selected_quote = QUOTES[quote_index]
 
-        # Exact matched channel names from your layout
         color_channel = discord.utils.get(guild.text_channels, name="🎨︱pick-your-color")
         rules_channel = discord.utils.get(guild.text_channels, name="📜rules")
         
@@ -167,6 +166,17 @@ async def avatar(interaction: discord.Interaction, member: discord.Member = None
     await interaction.response.send_message(embed=embed)
 
 # --- MODERATION SLASH COMMANDS ---
+
+@bot.tree.command(name="purge", description="Delete a specified amount of messages from the channel")
+@app_commands.checks.has_permissions(manage_messages=True)
+async def purge(interaction: discord.Interaction, amount: int):
+    if amount < 1 or amount > 100:
+        await interaction.response.send_message("❌ Please specify an amount between 1 and 100.", ephemeral=True)
+        return
+    
+    await interaction.response.defer(ephemeral=True)
+    deleted = await interaction.channel.purge(limit=amount)
+    await interaction.followup.send(f"✅ Cleaned up **{len(deleted)}** messages safely!")
 
 @bot.tree.command(name="kick", description="Kick a member from the server")
 @app_commands.checks.has_permissions(kick_members=True)
