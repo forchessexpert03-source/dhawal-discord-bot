@@ -4,6 +4,7 @@ from discord.ext import commands
 from discord import app_commands
 from flask import Flask
 import threading
+import datetime
 
 # --- INITIAL SETUP & INTENTS ---
 intents = discord.Intents.default()
@@ -50,12 +51,11 @@ QUOTES = [
 # --- WAVE INTERACTION BUTTON & STICKER CLASS ---
 class WelcomeView(discord.ui.View):
     def __init__(self, target_member: discord.Member):
-        super().__init__(timeout=None) # Keeps button active permanently
+        super().__init__(timeout=None)
         self.target_member = target_member
 
     @discord.ui.button(label="Wave", style=discord.ButtonStyle.blurple, emoji="👋")
     async def wave_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # Standard Discord Waving Sticker ID
         waving_sticker_id = 749054660769218631 
         sticker = interaction.guild.get_sticker(waving_sticker_id)
         
@@ -75,7 +75,6 @@ class WelcomeView(discord.ui.View):
 async def on_ready():
     print(f'🤖 {bot.user.name} is ONLINE!')
     try:
-        # Global sync on startup
         synced = await bot.tree.sync()
         print(f"Synced {len(synced)} command(s) globally")
     except Exception as e:
@@ -96,7 +95,7 @@ async def on_member_join(member: discord.Member):
         except Exception as e:
             print(f"Error assigning role: {e}")
 
-    # 2. #WELCOME CHANNEL LOGIC (Sequential Looping Quotes)
+    # 2. #WELCOME CHANNEL LOGIC
     welcome_channel = discord.utils.get(guild.text_channels, name="welcome")
     if welcome_channel:
         total_members = len(guild.members)
@@ -121,7 +120,7 @@ async def on_member_join(member: discord.Member):
 
         await welcome_channel.send(content=member.mention, embed=embed)
 
-    # 3. GENERAL CHAT LOGIC (Wave Trigger with Interactive Button)
+    # 3. GENERAL CHAT LOGIC
     general_channel = discord.utils.get(guild.text_channels, name="general")
     if general_channel:
         view = WelcomeView(target_member=member)
@@ -132,15 +131,15 @@ async def on_member_join(member: discord.Member):
 
 # --- MASTER FORCE-SYNC TEXT COMMAND ---
 @bot.command()
-@commands.is_owner()  # Only you can run this by typing !sync in regular chat
+@commands.is_owner()
 async def sync(ctx):
     try:
         await bot.tree.sync()
-        await ctx.send("🔄 Saari Slash Commands refresh aur sync ho gayi hain! Apne Discord ko refresh karo.")
+        await ctx.send("🔄 Saari Slash Commands refresh aur sync ho gayi hain!")
     except Exception as e:
         await ctx.send(f"❌ Sync failed: {e}")
 
-# --- ALL SLASH COMMANDS LIST ---
+# --- BASIC & UTILITY SLASH COMMANDS ---
 
 @bot.tree.command(name="ping", description="Test bot response speed")
 async def ping(interaction: discord.Interaction):
@@ -162,11 +161,44 @@ async def avatar(interaction: discord.Interaction, member: discord.Member = None
     embed.set_image(url=member.display_avatar.url)
     await interaction.response.send_message(embed=embed)
 
+# --- MODERATION SLASH COMMANDS ---
+
+@bot.tree.command(name="kick", description="Kick a member from the server")
+@app_commands.checks.has_permissions(kick_members=True)
+async def kick(interaction: discord.Interaction, member: discord.Member, reason: str = "No reason provided"):
+    await member.kick(reason=reason)
+    await interaction.response.send_message(f"🚨 **{member.name}** has been kicked. Reason: {reason}")
+
+@bot.tree.command(name="ban", description="Ban a member from the server")
+@app_commands.checks.has_permissions(ban_members=True)
+async def ban(interaction: discord.Interaction, member: discord.Member, reason: str = "No reason provided"):
+    await member.ban(reason=reason)
+    await interaction.response.send_message(f"🔨 **{member.name}** has been banned permanently. Reason: {reason}")
+
+@bot.tree.command(name="mute", description="Mute (Timeout) a member")
+@app_commands.checks.has_permissions(moderate_members=True)
+async def mute(interaction: discord.Interaction, member: discord.Member, duration_minutes: int = 10, reason: str = "No reason provided"):
+    duration = datetime.timedelta(minutes=duration_minutes)
+    await member.timeout(duration, reason=reason)
+    await interaction.response.send_message(f"🔇 **{member.name}** has been muted for {duration_minutes} minutes. Reason: {reason}")
+
+@bot.tree.command(name="unmute", description="Remove mute (Timeout) from a member")
+@app_commands.checks.has_permissions(moderate_members=True)
+async def unmute(interaction: discord.Interaction, member: discord.Member, reason: str = "No reason provided"):
+    await member.timeout(None, reason=reason)
+    await interaction.response.send_message(f"🔊 **{member.name}** has been unmuted.")
+
+@bot.tree.command(name="warn", description="Warn a member in the channel")
+@app_commands.checks.has_permissions(manage_messages=True)
+async def warn(interaction: discord.Interaction, member: discord.Member, reason: str = "No reason provided"):
+    embed = discord.Embed(title="⚠️ Warning Issued", color=discord.Color.orange())
+    embed.add_field(name="User", value=member.mention, inline=True)
+    embed.add_field(name="Moderator", value=interaction.user.mention, inline=True)
+    embed.add_field(name="Reason", value=reason, inline=False)
+    await interaction.response.send_message(content=member.mention, embed=embed)
+
 # --- BOT RUNNER ---
 if __name__ == "__main__":
-    # Start background web server for Render
     threading.Thread(target=run_web_server, daemon=True).start()
-    
-    # Run Bot via Env Variable Token
     token = os.environ.get('DISCORD_BOT_TOKEN')
     bot.run(token)
