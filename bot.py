@@ -51,7 +51,6 @@ QUOTES = [
 # --- COLOR SELECTION DROPDOWN SYSTEM ---
 class ColorDropdown(discord.ui.Select):
     def __init__(self):
-        # Options tailored directly to match your layout and screenshot
         options = [
             discord.SelectOption(label="Red", description="Bold & Fierce", emoji="🔴"),
             discord.SelectOption(label="Blue", description="Chill & Calm", emoji="🔵"),
@@ -69,19 +68,14 @@ class ColorDropdown(discord.ui.Select):
         member = interaction.user
         selected_color = self.values[0]
 
-        # Allowed color names based on your role config
         color_role_names = ["Red", "Purple", "Green", "Pink", "Orange", "Yellow", "Blue"]
-        
-        # Check if they already have this specific role (to allow toggling/removing)
         existing_target_role = discord.utils.get(member.roles, name=selected_color)
         
-        # 1. Clean up other conflicting color roles first
         roles_to_remove = [discord.utils.get(guild.roles, name=r) for r in color_role_names if r != selected_color]
         roles_to_remove = [r for r in roles_to_remove if r in member.roles]
         if roles_to_remove:
             await member.remove_roles(*roles_to_remove)
 
-        # 2. Toggle or Add the selected role
         if existing_target_role:
             try:
                 await member.remove_roles(existing_target_role)
@@ -101,7 +95,7 @@ class ColorDropdown(discord.ui.Select):
 
 class ColorView(discord.ui.View):
     def __init__(self):
-        super().__init__(timeout=None) # Keeps menu active permanently
+        super().__init__(timeout=None)
         self.add_item(ColorDropdown())
 
 
@@ -147,8 +141,8 @@ async def on_member_join(member: discord.Member):
         except discord.Forbidden:
             print(f"❌ Failed to assign role: Check bot hierarchy!")
 
-    # 2. #WELCOME CHANNEL LOGIC
-    welcome_channel = discord.utils.get(guild.text_channels, name="welcome")
+    # 2. #WELCOME CHANNEL LOGIC (UPDATED NAME MATCH)
+    welcome_channel = discord.utils.get(guild.text_channels, name="👋-welcome")
     if welcome_channel:
         total_members = len(guild.members)
         quote_index = (total_members - 1) % len(QUOTES)
@@ -192,7 +186,6 @@ async def sync(ctx):
 @bot.tree.command(name="setupcolors", description="Deploy the custom color selection dropdown in this channel")
 @app_commands.checks.has_permissions(administrator=True)
 async def setupcolors(interaction: discord.Interaction):
-    # Your exact aesthetic text layout restored perfectly
     embed = discord.Embed(
         title="🌈 SERVER PROFILE COLORS",
         description=(
@@ -209,11 +202,9 @@ async def setupcolors(interaction: discord.Interaction):
             "2. Select your favorite color.\n"
             "3. Want to change or remove it? Just select a new one or click the same color again!"
         ),
-        color=discord.Color.from_rgb(231, 76, 60) # Classic premium red accent highlight
+        color=discord.Color.from_rgb(231, 76, 60)
     )
     embed.set_footer(text="Dhawal Custom Management System")
-    
-    # Sends the beautiful interface layout
     await interaction.response.send_message(embed=embed, view=ColorView())
 
 # --- BASIC & UTILITY SLASH COMMANDS ---
