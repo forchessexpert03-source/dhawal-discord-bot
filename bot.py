@@ -51,17 +51,17 @@ QUOTES = [
 # --- COLOR SELECTION DROPDOWN SYSTEM ---
 class ColorDropdown(discord.ui.Select):
     def __init__(self):
-        # EXACT list of color roles matching your server screenshot
+        # Options tailored directly to match your layout and screenshot
         options = [
-            discord.SelectOption(label="Red", description="Pick the Red role color!", emoji="🔴"),
-            discord.SelectOption(label="Purple", description="Pick the Purple role color!", emoji="🟣"),
-            discord.SelectOption(label="Green", description="Pick the Green role color!", emoji="🟢"),
-            discord.SelectOption(label="Pink", description="Pick the Pink role color!", emoji="🌸"),
-            discord.SelectOption(label="Orange", description="Pick the Orange role color!", emoji="🟠"),
-            discord.SelectOption(label="Yellow", description="Pick the Yellow role color!", emoji="🟡"),
-            discord.SelectOption(label="Blue", description="Pick the Blue role color!", emoji="🔵")
+            discord.SelectOption(label="Red", description="Bold & Fierce", emoji="🔴"),
+            discord.SelectOption(label="Blue", description="Chill & Calm", emoji="🔵"),
+            discord.SelectOption(label="Green", description="Fresh & Creative", emoji="🟢"),
+            discord.SelectOption(label="Yellow", description="Bright & Energetic", emoji="🟡"),
+            discord.SelectOption(label="Orange", description="Wild & Vibrant", emoji="🟠"),
+            discord.SelectOption(label="Purple", description="Royal & Mystery", emoji="🟣"),
+            discord.SelectOption(label="Pink", description="Aesthetic & Cute", emoji="🌸")
         ]
-        super().__init__(placeholder="Choose your custom profile color...", min_values=1, max_values=1, options=options)
+        super().__init__(placeholder="Tap here to pick your profile color...", min_values=1, max_values=1, options=options)
 
     async def callback(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
@@ -69,26 +69,35 @@ class ColorDropdown(discord.ui.Select):
         member = interaction.user
         selected_color = self.values[0]
 
-        # All your exact color role names list
+        # Allowed color names based on your role config
         color_role_names = ["Red", "Purple", "Green", "Pink", "Orange", "Yellow", "Blue"]
         
-        # 1. Remove any other color role the member already has (to avoid stacking)
+        # Check if they already have this specific role (to allow toggling/removing)
+        existing_target_role = discord.utils.get(member.roles, name=selected_color)
+        
+        # 1. Clean up other conflicting color roles first
         roles_to_remove = [discord.utils.get(guild.roles, name=r) for r in color_role_names if r != selected_color]
         roles_to_remove = [r for r in roles_to_remove if r in member.roles]
-        
         if roles_to_remove:
             await member.remove_roles(*roles_to_remove)
 
-        # 2. Assign the newly selected color role
-        target_role = discord.utils.get(guild.roles, name=selected_color)
-        if target_role:
+        # 2. Toggle or Add the selected role
+        if existing_target_role:
             try:
-                await member.add_roles(target_role)
-                await interaction.followup.send(f"🎨 Success! Your color role has been updated to **{selected_color}**.", ephemeral=True)
+                await member.remove_roles(existing_target_role)
+                await interaction.followup.send(f"🎨 Removed your **{selected_color}** color role profile styling.", ephemeral=True)
             except discord.Forbidden:
-                await interaction.followup.send("❌ Cannot assign role. Ensure 'Dhawal' role is physically above the color roles in your server settings!", ephemeral=True)
+                await interaction.followup.send("❌ Error removing role. Check permissions layout.", ephemeral=True)
         else:
-            await interaction.followup.send(f"❌ Role '{selected_color}' not found in the server setup.", ephemeral=True)
+            target_role = discord.utils.get(guild.roles, name=selected_color)
+            if target_role:
+                try:
+                    await member.add_roles(target_role)
+                    await interaction.followup.send(f"🎨 Success! Your color role has been updated to **{selected_color}**.", ephemeral=True)
+                except discord.Forbidden:
+                    await interaction.followup.send("❌ Cannot assign role. Ensure 'Dhawal' role is physically above the color roles in your server settings!", ephemeral=True)
+            else:
+                await interaction.followup.send(f"❌ Role '{selected_color}' not found in the server setup.", ephemeral=True)
 
 class ColorView(discord.ui.View):
     def __init__(self):
@@ -118,7 +127,6 @@ class WelcomeView(discord.ui.View):
 @bot.event
 async def on_ready():
     print(f'🤖 {bot.user.name} is ONLINE!')
-    # Add persistent view so buttons/dropdowns work even after bot restarts
     bot.add_view(ColorView())
     try:
         synced = await bot.tree.sync()
@@ -184,12 +192,28 @@ async def sync(ctx):
 @bot.tree.command(name="setupcolors", description="Deploy the custom color selection dropdown in this channel")
 @app_commands.checks.has_permissions(administrator=True)
 async def setupcolors(interaction: discord.Interaction):
+    # Your exact aesthetic text layout restored perfectly
     embed = discord.Embed(
-        title="🎨 Pick Your Custom Profile Color",
-        description="Select a color from the dropdown selection menu below to dynamic upgrade your profile appearance!",
-        color=discord.Color.blurple()
+        title="🌈 SERVER PROFILE COLORS",
+        description=(
+            "Welcome! Customize your username color in this server by selecting a vibe from the dropdown menu below.\n\n"
+            "🔴 **Red** — Bold & Fierce\n"
+            "🔵 **Blue** — Chill & Calm\n"
+            "🟢 **Green** — Fresh & Creative\n"
+            "🟡 **Yellow** — Bright & Energetic\n"
+            "🟠 **Orange** — Wild & Vibrant\n"
+            "🟣 **Purple** — Royal & Mystery\n"
+            "🌸 **Pink** — Aesthetic & Cute\n\n"
+            "**How it works:**\n"
+            "1. Click the dropdown menu below.\n"
+            "2. Select your favorite color.\n"
+            "3. Want to change or remove it? Just select a new one or click the same color again!"
+        ),
+        color=discord.Color.from_rgb(231, 76, 60) # Classic premium red accent highlight
     )
-    # Sends the actual dropdown interface
+    embed.set_footer(text="Dhawal Custom Management System")
+    
+    # Sends the beautiful interface layout
     await interaction.response.send_message(embed=embed, view=ColorView())
 
 # --- BASIC & UTILITY SLASH COMMANDS ---
