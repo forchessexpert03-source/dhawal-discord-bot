@@ -56,7 +56,11 @@ class WelcomeView(discord.ui.View):
 
     @discord.ui.button(label="Wave", style=discord.ButtonStyle.blurple, emoji="👋")
     async def wave_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        waving_sticker_id = 749054660769218631 
+        # INSTANTLY defer to make sure Discord registers the click under 3 seconds
+        await interaction.response.defer()
+        
+        # Exact Sticker ID parsed from your Discord URL
+        waving_sticker_id = 1512147790975865043 
         sticker = interaction.guild.get_sticker(waving_sticker_id)
         
         if sticker:
@@ -65,10 +69,10 @@ class WelcomeView(discord.ui.View):
                 stickers=[sticker]
             )
         else:
+            # Safe text fallback if the bot faces latency while fetching the sticker asset
             await interaction.channel.send(
                 f"{interaction.user.mention} waved to {self.target_member.mention}! 👋👋👋"
             )
-        await interaction.response.defer()
 
 # --- EVENTS ---
 @bot.event
@@ -102,11 +106,12 @@ async def on_member_join(member: discord.Member):
         quote_index = (total_members - 1) % len(QUOTES)
         selected_quote = QUOTES[quote_index]
 
-        color_channel = discord.utils.get(guild.text_channels, name="pick-your-color")
-        rules_channel = discord.utils.get(guild.text_channels, name="rules")
+        # Exact matched channel names from your layout
+        color_channel = discord.utils.get(guild.text_channels, name="🎨︱pick-your-color")
+        rules_channel = discord.utils.get(guild.text_channels, name="📜rules")
         
-        color_mention = color_channel.mention if color_channel else "#pick-your-color"
-        rules_mention = rules_channel.mention if rules_channel else "#rules"
+        color_mention = color_channel.mention if color_channel else "`🎨︱pick-your-color`"
+        rules_mention = rules_channel.mention if rules_channel else "`📜rules`"
 
         embed = discord.Embed(
             title=f"Welcome to the Server, {member.name}! 🎉",
