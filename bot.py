@@ -48,6 +48,54 @@ QUOTES = [
     "“The best way to predict your future is to create it.”"
 ]
 
+# --- COLOR SELECTION DROPDOWN SYSTEM ---
+class ColorDropdown(discord.ui.Select):
+    def __init__(self):
+        # EXACT list of color roles matching your server screenshot
+        options = [
+            discord.SelectOption(label="Red", description="Pick the Red role color!", emoji="🔴"),
+            discord.SelectOption(label="Purple", description="Pick the Purple role color!", emoji="🟣"),
+            discord.SelectOption(label="Green", description="Pick the Green role color!", emoji="🟢"),
+            discord.SelectOption(label="Pink", description="Pick the Pink role color!", emoji="🌸"),
+            discord.SelectOption(label="Orange", description="Pick the Orange role color!", emoji="🟠"),
+            discord.SelectOption(label="Yellow", description="Pick the Yellow role color!", emoji="🟡"),
+            discord.SelectOption(label="Blue", description="Pick the Blue role color!", emoji="🔵")
+        ]
+        super().__init__(placeholder="Choose your custom profile color...", min_values=1, max_values=1, options=options)
+
+    async def callback(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        guild = interaction.guild
+        member = interaction.user
+        selected_color = self.values[0]
+
+        # All your exact color role names list
+        color_role_names = ["Red", "Purple", "Green", "Pink", "Orange", "Yellow", "Blue"]
+        
+        # 1. Remove any other color role the member already has (to avoid stacking)
+        roles_to_remove = [discord.utils.get(guild.roles, name=r) for r in color_role_names if r != selected_color]
+        roles_to_remove = [r for r in roles_to_remove if r in member.roles]
+        
+        if roles_to_remove:
+            await member.remove_roles(*roles_to_remove)
+
+        # 2. Assign the newly selected color role
+        target_role = discord.utils.get(guild.roles, name=selected_color)
+        if target_role:
+            try:
+                await member.add_roles(target_role)
+                await interaction.followup.send(f"🎨 Success! Your color role has been updated to **{selected_color}**.", ephemeral=True)
+            except discord.Forbidden:
+                await interaction.followup.send("❌ Cannot assign role. Ensure 'Dhawal' role is physically above the color roles in your server settings!", ephemeral=True)
+        else:
+            await interaction.followup.send(f"❌ Role '{selected_color}' not found in the server setup.", ephemeral=True)
+
+class ColorView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None) # Keeps menu active permanently
+        self.add_item(ColorDropdown())
+
+
 # --- WAVE INTERACTION BUTTON & STICKER CLASS ---
 class WelcomeView(discord.ui.View):
     def __init__(self, target_member: discord.Member):
@@ -56,28 +104,22 @@ class WelcomeView(discord.ui.View):
 
     @discord.ui.button(label="Wave", style=discord.ButtonStyle.blurple, emoji="👋")
     async def wave_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # INSTANTLY defer to absolutely eliminate "Interaction Failed"
         await interaction.response.defer()
-        
         waving_sticker_id = 1512147790975865043 
         
-        # Creating sticker object directly from ID for absolute reliability
         try:
             sticker = await interaction.guild.fetch_sticker(waving_sticker_id)
-            await interaction.channel.send(
-                f"{interaction.user.mention} waved to {self.target_member.mention}! 👋", 
-                stickers=[sticker]
-            )
+            await interaction.channel.send(f"{interaction.user.mention} waved to {self.target_member.mention}! 👋", stickers=[sticker])
         except Exception:
-            # Safe text fallback if Discord API takes too long to load the sticker asset
-            await interaction.channel.send(
-                f"{interaction.user.mention} waved to {self.target_member.mention}! 👋👋👋"
-            )
+            await interaction.channel.send(f"{interaction.user.mention} waved to {self.target_member.mention}! 👋👋👋")
+
 
 # --- EVENTS ---
 @bot.event
 async def on_ready():
     print(f'🤖 {bot.user.name} is ONLINE!')
+    # Add persistent view so buttons/dropdowns work even after bot restarts
+    bot.add_view(ColorView())
     try:
         synced = await bot.tree.sync()
         print(f"Synced {len(synced)} command(s) globally")
@@ -96,8 +138,6 @@ async def on_member_join(member: discord.Member):
             print(f"Assigned 'Lil Dawg' role to {member.name}")
         except discord.Forbidden:
             print(f"❌ Failed to assign role: Check bot hierarchy!")
-        except Exception as e:
-            print(f"Error assigning role: {e}")
 
     # 2. #WELCOME CHANNEL LOGIC
     welcome_channel = discord.utils.get(guild.text_channels, name="welcome")
@@ -128,10 +168,7 @@ async def on_member_join(member: discord.Member):
     general_channel = discord.utils.get(guild.text_channels, name="general")
     if general_channel:
         view = WelcomeView(target_member=member)
-        await general_channel.send(
-            f"Hey crew! {member.mention} has joined the server. Say hi or wave to them! 👋",
-            view=view
-        )
+        await general_channel.send(f"Hey crew! {member.mention} has joined the server. Say hi or wave to them! 👋", view=view)
 
 # --- MASTER FORCE-SYNC TEXT COMMAND ---
 @bot.command()
@@ -142,6 +179,18 @@ async def sync(ctx):
         await ctx.send("🔄 Saari Slash Commands refresh aur sync ho gayi hain!")
     except Exception as e:
         await ctx.send(f"❌ Sync failed: {e}")
+
+# --- SETUP COMPONENT SLASH COMMAND ---
+@bot.tree.command(name="setupcolors", description="Deploy the custom color selection dropdown in this channel")
+@app_commands.checks.has_permissions(administrator=True)
+async def setupcolors(interaction: discord.Interaction):
+    embed = discord.Embed(
+        title="🎨 Pick Your Custom Profile Color",
+        description="Select a color from the dropdown selection menu below to dynamic upgrade your profile appearance!",
+        color=discord.Color.blurple()
+    )
+    # Sends the actual dropdown interface
+    await interaction.response.send_message(embed=embed, view=ColorView())
 
 # --- BASIC & UTILITY SLASH COMMANDS ---
 
@@ -173,7 +222,6 @@ async def purge(interaction: discord.Interaction, amount: int):
     if amount < 1 or amount > 100:
         await interaction.response.send_message("❌ Please specify an amount between 1 and 100.", ephemeral=True)
         return
-    
     await interaction.response.defer(ephemeral=True)
     deleted = await interaction.channel.purge(limit=amount)
     await interaction.followup.send(f"✅ Cleaned up **{len(deleted)}** messages safely!")
