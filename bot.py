@@ -5,10 +5,11 @@ from discord import app_commands
 from flask import Flask
 import threading
 import datetime
+import json
 
 # --- INITIAL SETUP & INTENTS ---
 intents = discord.Intents.default()
-intents.members = True  # Required for welcome system and auto-role
+intents.members = True  
 intents.message_content = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
@@ -47,6 +48,33 @@ QUOTES = [
     "“Yesterday I was clever, so I wanted to change the world. Today I am wise, so I am changing myself.”",
     "“The best way to predict your future is to create it.”"
 ]
+
+# --- DATABASES (LEVELS & SNIPE STORAGE) ---
+LEVELS_FILE = "levels.json"
+SNIPE_FILE = "snipe_logs.json"
+
+def load_json_data(filename):
+    if os.path.exists(filename):
+        try:
+            with open(filename, "r") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+    return {}
+
+def save_json_data(data, filename):
+    with open(filename, "w") as f:
+        json.dump(data, f, indent=4)
+
+# Global runtime cache for fast sniping
+snipe_data = {}
+
+# --- HELPER: DYNAMIC CHANNEL KEYWORD MATCHING ---
+def get_flexible_channel(guild, keyword):
+    for channel in guild.text_channels:
+        if keyword in channel.name.lower():
+            return channel
+    return None
 
 # --- COLOR SELECTION DROPDOWN SYSTEM ---
 class ColorDropdown(discord.ui.Select):
@@ -99,7 +127,7 @@ class ColorView(discord.ui.View):
         self.add_item(ColorDropdown())
 
 
-# --- WAVE INTERACTION BUTTON & STICKER CLASS ---
+# --- WAVE INTERACTION BUTTON CLASS ---
 class WelcomeView(discord.ui.View):
     def __init__(self, target_member: discord.Member):
         super().__init__(timeout=None)
@@ -117,10 +145,10 @@ class WelcomeView(discord.ui.View):
             await interaction.channel.send(f"{interaction.user.mention} waved to {self.target_member.mention}! 👋👋👋")
 
 
-# --- EVENTS ---
+# --- EVENTS & LOGGING LISTENERS ---
 @bot.event
 async def on_ready():
-    print(f'🤖 {bot.user.name} is ONLINE!')
+    print(f'🤖 {bot.user.name} is ONLINE & FLEXIBLE!')
     bot.add_view(ColorView())
     try:
         synced = await bot.tree.sync()
@@ -132,24 +160,30 @@ async def on_ready():
 async def on_member_join(member: discord.Member):
     guild = member.guild
     
-    # 1. AUTO-ROLE ASSIGNMENT ("Lil Dawg")
-    role = discord.utils.get(guild.roles, name="Lil Dawg")
-    if role:
+    roles_to_add = []
+    lil_dawg_role = discord.utils.get(guild.roles, name="Lil Dawg")
+    newbies_role = discord.utils.get(guild.roles, name="Newbies")
+    
+    if lil_dawg_role:
+        roles_to_add.append(lil_dawg_role)
+    if newbies_role:
+        roles_to_add.append(newbies_role)
+        
+    if roles_to_add:
         try:
-            await member.add_roles(role)
-            print(f"Assigned 'Lil Dawg' role to {member.name}")
+            await member.add_roles(*roles_to_add)
         except discord.Forbidden:
-            print(f"❌ Failed to assign role: Check bot hierarchy!")
+            print(f"❌ Failed to assign join roles: Check bot hierarchy!")
 
-    # 2. #WELCOME CHANNEL LOGIC (UPDATED NAME MATCH)
-    welcome_channel = discord.utils.get(guild.text_channels, name="👋-welcome")
+    # 1. Flexible Welcome Channel Match
+    welcome_channel = get_flexible_channel(guild, "welcome")
     if welcome_channel:
         total_members = len(guild.members)
         quote_index = (total_members - 1) % len(QUOTES)
         selected_quote = QUOTES[quote_index]
 
-        color_channel = discord.utils.get(guild.text_channels, name="🎨︱pick-your-color")
-        rules_channel = discord.utils.get(guild.text_channels, name="📜rules")
+        color_channel = get_flexible_channel(guild, "color")
+        rules_channel = get_flexible_channel(guild, "rules")
         
         color_mention = color_channel.mention if color_channel else "`🎨︱pick-your-color`"
         rules_mention = rules_channel.mention if rules_channel else "`📜rules`"
@@ -166,11 +200,150 @@ async def on_member_join(member: discord.Member):
 
         await welcome_channel.send(content=member.mention, embed=embed)
 
-    # 3. GENERAL CHAT LOGIC
-    general_channel = discord.utils.get(guild.text_channels, name="general")
+    # 2. Flexible General Channel Match
+    general_channel = get_flexible_channel(guild, "general")
     if general_channel:
         view = WelcomeView(target_member=member)
         await general_channel.send(f"Hey crew! {member.mention} has joined the server. Say hi or wave to them! 👋", view=view)
+
+
+# --- DETECT DELETED MESSAGES (SNIPE ENGINE) ---
+@bot.event
+async def on_message_delete(message):
+    if message.author.bot:
+        return
+        
+    channel_id = str(message.channel.id)
+    
+    # Check memory storage to see if this message was an edited message before deletion
+    history_db = load_json_data(SNIPE_FILE)
+    msg_id = str(message.id)
+    was_edited = msg_id in history_db
+    
+    edit_note = ""
+    if was_edited:
+        edit_note = f"\n*(⚠️ Note: This message was edited before deletion. Original: \"{history_db[msg_id]['before']}\")*"
+
+    # Save to transient memory cache for active /snipe command
+    snipe_data[channel_id] = {
+        "content": message.content if message.content else "[No text or attachment contained]",
+        "author": message.author.name,
+        "avatar": message.author.display_avatar.url,
+        "timestamp": datetime.datetime.now().strftime("%I:%M:%S %p"),
+        "extra_info": edit_note
+    }
+
+
+# --- DETECT EDITED MESSAGES (EDIT GHOST LOGGER) ---
+@bot.event
+async def on_message_edit(before, after):
+    if before.author.bot or before.content == after.content:
+        return
+
+    # Track message edit states in permanent storage logs
+    history_db = load_json_data(SNIPE_FILE)
+    history_db[str(before.id)] = {
+        "author": before.author.name,
+        "before": before.content,
+        "after": after.content,
+        "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %I:%M:%S %p")
+    }
+    
+    # Keep historical list neat & bounded to last 100 entries max to prevent overflow
+    if len(history_db) > 100:
+        first_key = list(history_db.keys())[0]
+        history_db.pop(first_key)
+        
+    save_json_data(history_db, SNIPE_FILE)
+
+
+# --- SPAM COUNTER FOR XP TRACKING ---
+@bot.event
+async def on_message(message):
+    if message.author.bot:
+        return
+
+    user_id = str(message.author.id)
+    level_db = load_json_data(LEVELS_FILE)
+
+    if user_id not in level_db:
+        level_db[user_id] = {"xp": 0, "level": 0}
+
+    level_db[user_id]["xp"] += 1
+    current_xp = level_db[user_id]["xp"]
+    current_lvl = level_db[user_id]["level"]
+
+    next_lvl_xp = (current_lvl + 1) * 15
+
+    if current_xp >= next_lvl_xp:
+        level_db[user_id]["level"] += 1
+        new_lvl = level_db[user_id]["level"]
+        
+        await message.channel.send(f"🔥 **LEVEL UP!** {message.author.mention} just hit **Level {new_lvl}**! Bakchodi chalte rehni chahiye! 🎉")
+
+        if new_lvl == 10:
+            guild = message.guild
+            newbies_role = discord.utils.get(guild.roles, name="Newbies")
+            mehmaan_role = discord.utils.get(guild.roles, name="Mehmaan")
+
+            try:
+                if newbies_role in message.author.roles:
+                    await message.author.remove_roles(newbies_role)
+                if mehmaan_role:
+                    await message.author.add_roles(mehmaan_role)
+                    await message.channel.send(f"👑 {message.author.mention} ab Newbie nahi rahe! Unhe **Mehmaan** ka V.I.P darja mil chuka hai!")
+            except discord.Forbidden:
+                print("❌ Role swap failed: Check bot hierarchy layout permissions.")
+
+    save_json_data(level_db, LEVELS_FILE)
+    await bot.process_commands(message)
+
+
+# --- SNIPE COMMAND ---
+@bot.tree.command(name="snipe", description="Catch the last deleted message in this channel instantly")
+async def snipe(interaction: discord.Interaction):
+    channel_id = str(interaction.channel.id)
+    
+    if channel_id not in snipe_data:
+        await interaction.response.send_message("🔍 Is channel me mujhe koi bhi haal hi me deleted message nahi mila!", ephemeral=True)
+        return
+
+    data = snipe_data[channel_id]
+    
+    embed = discord.Embed(
+        title="🎯 Message Sniped!",
+        description=f"{data['content']}{data['extra_info']}",
+        color=discord.Color.red()
+    )
+    embed.set_author(name=f"Sent by {data['author']}", icon_url=data['avatar'])
+    embed.set_footer(text=f"Deleted at {data['timestamp']}")
+    
+    await interaction.response.send_message(embed=embed)
+
+
+# --- LEVEL COMMAND ---
+@bot.tree.command(name="level", description="Check your current chat status level and message progress")
+async def level(interaction: discord.Interaction, member: discord.Member = None):
+    target_user = member or interaction.user
+    user_id = str(target_user.id)
+    level_db = load_json_data(LEVELS_FILE)
+
+    if user_id not in level_db:
+        await interaction.response.send_message(f"📊 **{target_user.name}** ne abhi tak chat shuru nahi ki hai! Level: 0 (0 Messages)", ephemeral=False)
+        return
+
+    lvl = level_db[user_id]["level"]
+    xp = level_db[user_id]["xp"]
+    next_xp = (lvl + 1) * 15
+
+    embed = discord.Embed(title=f"📊 {target_user.name}'s Level Stats", color=discord.Color.green())
+    embed.add_field(name="Current Level", value=f"✨ **Level {lvl}**", inline=True)
+    embed.add_field(name="Total Messages Sent", value=f"💬 **{xp} Messages**", inline=True)
+    embed.add_field(name="Next Level At", value=f"📈 **{next_xp} Messages**", inline=False)
+    embed.set_thumbnail(url=target_user.display_avatar.url)
+    
+    await interaction.response.send_message(embed=embed)
+
 
 # --- MASTER FORCE-SYNC TEXT COMMAND ---
 @bot.command()
@@ -207,7 +380,7 @@ async def setupcolors(interaction: discord.Interaction):
     embed.set_footer(text="Dhawal Custom Management System")
     await interaction.response.send_message(embed=embed, view=ColorView())
 
-# --- BASIC & UTILITY SLASH COMMANDS ---
+# --- BASIC UTILITY & MODERATION SLASH COMMANDS ---
 
 @bot.tree.command(name="ping", description="Test bot response speed")
 async def ping(interaction: discord.Interaction):
@@ -228,8 +401,6 @@ async def avatar(interaction: discord.Interaction, member: discord.Member = None
     embed = discord.Embed(title=f"{member.name}'s Avatar", color=discord.Color.random())
     embed.set_image(url=member.display_avatar.url)
     await interaction.response.send_message(embed=embed)
-
-# --- MODERATION SLASH COMMANDS ---
 
 @bot.tree.command(name="purge", description="Delete a specified amount of messages from the channel")
 @app_commands.checks.has_permissions(manage_messages=True)
