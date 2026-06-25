@@ -249,7 +249,6 @@ async def on_message_edit(before, after):
         "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %I:%M:%S %p")
     }
     
-    # Keep historical list neat & bounded to last 100 entries max to prevent overflow
     if len(history_db) > 100:
         first_key = list(history_db.keys())[0]
         history_db.pop(first_key)
@@ -318,6 +317,41 @@ async def snipe(interaction: discord.Interaction):
     embed.set_author(name=f"Sent by {data['author']}", icon_url=data['avatar'])
     embed.set_footer(text=f"Deleted at {data['timestamp']}")
     
+    await interaction.response.send_message(embed=embed)
+
+
+# --- EDIT LOGS COMMAND ---
+@bot.tree.command(name="editlogs", description="Check the ghost edit history of a specific user")
+@app_commands.checks.has_permissions(manage_messages=True)
+async def editlogs(interaction: discord.Interaction, member: discord.Member):
+    history_db = load_json_data(SNIPE_FILE)
+    user_logs = []
+
+    for msg_id, log in history_db.items():
+        if log["author"] == member.name:
+            user_logs.append(log)
+
+    if not user_logs:
+        await interaction.response.send_message(f"🔍 **{member.name}** ne haal hi me koi message edit nahi kiya hai!", ephemeral=True)
+        return
+
+    user_logs.reverse()
+    latest_logs = user_logs[:5]
+
+    embed = discord.Embed(
+        title=f"🕵️‍♂️ Ghost Edit Logs: {member.name}",
+        description="Pichle kuch edited messages ki asliyat:",
+        color=discord.Color.orange()
+    )
+    embed.set_thumbnail(url=member.display_avatar.url)
+
+    for idx, log in enumerate(latest_logs, 1):
+        embed.add_field(
+            name=f"📝 Edit #{idx} ({log['timestamp']})",
+            value=f"**Before:** {log['before']}\n**After:** {log['after']}",
+            inline=False
+        )
+
     await interaction.response.send_message(embed=embed)
 
 
