@@ -70,9 +70,12 @@ def save_json_data(data, filename):
 snipe_data = {}
 
 # --- HELPER: DYNAMIC CHANNEL KEYWORD MATCHING ---
-def get_flexible_channel(guild, keyword):
+def get_flexible_channel(guild, keywords):
+    # keywords can be a string or a list of strings
+    if isinstance(keywords, str):
+        keywords = [keywords]
     for channel in guild.text_channels:
-        if keyword in channel.name.lower():
+        if any(kw in channel.name.lower() for kw in keywords):
             return channel
     return None
 
@@ -182,19 +185,22 @@ async def on_member_join(member: discord.Member):
         quote_index = (total_members - 1) % len(QUOTES)
         selected_quote = QUOTES[quote_index]
 
-        color_channel = get_flexible_channel(guild, "color")
-        rules_channel = get_flexible_channel(guild, "rules")
-        
-        color_mention = color_channel.mention if color_channel else "`🎨︱pick-your-color`"
-        rules_mention = rules_channel.mention if rules_channel else "`📜rules`"
-
         embed = discord.Embed(
             title=f"Welcome to the Server, {member.name}! 🎉",
             description=f"We are glad to have you here with us!\n\n✨ *{selected_quote}*",
             color=discord.Color.from_rgb(114, 137, 218)
         )
-        embed.add_field(name="🎨 Get Roles", value=f"Head over to {color_mention} to grab your custom colors!", inline=False)
-        embed.add_field(name="📜 Server Rules", value=f"Make sure to check out {rules_mention} to keep the community clean.", inline=False)
+        
+        # DYNAMIC FIELDS CHECK: Add colors row ONLY if keyword match exists
+        color_channel = get_flexible_channel(guild, ["color", "colours"])
+        if color_channel:
+            embed.add_field(name="🎨 Get Roles", value=f"Head over to {color_channel.mention} to grab your custom colors!", inline=False)
+            
+        # DYNAMIC FIELDS CHECK: Add rules row ONLY if keyword match exists
+        rules_channel = get_flexible_channel(guild, "rules")
+        if rules_channel:
+            embed.add_field(name="📜 Server Rules", value=f"Make sure to check out {rules_channel.mention} to keep the community clean.", inline=False)
+
         embed.set_thumbnail(url=member.display_avatar.url)
         embed.set_footer(text=f"Member #{total_members}")
 
@@ -210,15 +216,16 @@ async def on_member_join(member: discord.Member):
 # --- DETECT DELETED MESSAGES (SNIPE ENGINE) ---
 @bot.event
 async def on_message_delete(message):
-    if message.author.bot:
+    if message.author.bot or not message.guild:
         return
         
     channel_id = str(message.channel.id)
+    guild_id = str(message.guild.id)
     
     # Check memory storage to see if this message was an edited message before deletion
     history_db = load_json_data(SNIPE_FILE)
     msg_id = str(message.id)
-    was_edited = msg_id in history_db
+    was_edited = msg_id in history_db and history_db[msg_id].get("guild_id") == guild_id
     
     edit_note = ""
     if was_edited:
@@ -234,15 +241,18 @@ async def on_message_delete(message):
     }
 
 
-# --- DETECT EDITED MESSAGES (EDIT GHOST LOGGER) ---
+# --- DETECT EDITED MESSAGES (EDIT GHOST LOGGER WITH SERVER ID) ---
 @bot.event
 async def on_message_edit(before, after):
-    if before.author.bot or before.content == after.content:
+    if before.author.bot or before.content == after.content or not before.guild:
         return
 
-    # Track message edit states in permanent storage logs
+    guild_id = str(before.guild.id)
+
+    # Track message edit states with Guild ID filter to prevent multi-server leaks
     history_db = load_json_data(SNIPE_FILE)
     history_db[str(before.id)] = {
+        "guild_id": guild_id,
         "author": before.author.name,
         "before": before.content,
         "after": after.content,
@@ -320,19 +330,21 @@ async def snipe(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed)
 
 
-# --- EDIT LOGS COMMAND ---
-@bot.tree.command(name="editlogs", description="Check the ghost edit history of a specific user")
+# --- EDIT LOGS COMMAND (FIXED SERVER ISOLATION) ---
+@bot.tree.command(name="editlogs", description="Check the ghost edit history of a specific user in this server")
 @app_commands.checks.has_permissions(manage_messages=True)
 async def editlogs(interaction: discord.Interaction, member: discord.Member):
     history_db = load_json_data(SNIPE_FILE)
+    current_guild_id = str(interaction.guild.id)
     user_logs = []
 
+    # Strict multi-server isolation filter
     for msg_id, log in history_db.items():
-        if log["author"] == member.name:
+        if log.get("author") == member.name and log.get("guild_id") == current_guild_id:
             user_logs.append(log)
 
     if not user_logs:
-        await interaction.response.send_message(f"🔍 **{member.name}** ne haal hi me koi message edit nahi kiya hai!", ephemeral=True)
+        await interaction.response.send_message(f"🔍 **{member.name}** ne *iss server me* haal hi me koi message edit nahi kiya hai!", ephemeral=True)
         return
 
     user_logs.reverse()
@@ -340,7 +352,7 @@ async def editlogs(interaction: discord.Interaction, member: discord.Member):
 
     embed = discord.Embed(
         title=f"🕵️‍♂️ Ghost Edit Logs: {member.name}",
-        description="Pichle kuch edited messages ki asliyat:",
+        description=f"Pichle kuch edited messages (Only in {interaction.guild.name}):",
         color=discord.Color.orange()
     )
     embed.set_thumbnail(url=member.display_avatar.url)
