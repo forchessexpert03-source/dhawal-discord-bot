@@ -8,6 +8,7 @@ import datetime
 import json
 import pytz  
 import google.generativeai as genai
+import asyncio
 
 # --- INITIAL SETUP & INTENTS ---
 intents = discord.Intents.default()
@@ -160,6 +161,61 @@ class WelcomeView(discord.ui.View):
             await interaction.channel.send(f"{interaction.user.mention} waved to {self.target_member.mention}! 👋", stickers=[sticker])
         except Exception:
             await interaction.channel.send(f"{interaction.user.mention} waved to {self.target_member.mention}! 👋👋👋")
+
+
+# --- INTERACTIVE QUIZ PLAY BUTTONS VIEW ---
+class QuizPlayView(discord.ui.View):
+    def __init__(self, options, correct_answer):
+        super().__init__(timeout=30.0)  # 30 Seconds overall timer for answering
+        self.options = options
+        self.correct_answer = correct_answer
+        self.answered_correctly_by = None
+        
+        # Add a custom button for each choice dynamically
+        prefixes = ["A", "B", "C", "D"]
+        for i, option in enumerate(options):
+            if i >= 4: break
+            self.add_item(QuizButton(label=f"{prefixes[i]}. {option}", value=option, custom_id=f"quiz_opt_{i}"))
+
+    async def on_timeout(self):
+        # Disable all items when the session closes
+        for item in self.children:
+            item.disabled = True
+        self.stop()
+
+
+class QuizButton(discord.ui.Button):
+    def __init__(self, label, value, custom_id):
+        super().__init__(label=label, style=discord.ButtonStyle.secondary, custom_id=custom_id)
+        self.value = value
+
+    async def callback(self, interaction: discord.Interaction):
+        view: QuizPlayView = self.view
+        
+        # Check if the clicked button matches the accurate database entry
+        if self.value == view.correct_answer:
+            view.answered_correctly_by = interaction.user
+            self.style = discord.ButtonStyle.success
+            
+            # Disable everything since round is finished
+            for child in view.children:
+                child.disabled = True
+                
+            view.stop()
+            
+            # Award +15 XP instantly inside current session database
+            level_db = load_json_data(LEVELS_FILE)
+            u_id = str(interaction.user.id)
+            if u_id not in level_db:
+                level_db[u_id] = {"xp": 0, "level": 0}
+            level_db[u_id]["xp"] += 15
+            save_json_data(level_db, LEVELS_FILE)
+            
+            await interaction.response.edit_message(view=view)
+            await interaction.followup.send(f"🎉 **SAHI JAWAAB!** {interaction.user.mention} ne sabse pehle correct option chunna! Aur unhe milte hain **+15 XP**! 🏆")
+        else:
+            # Ephemeral response so other server mates don't get distracted by wrong guesses
+            await interaction.response.send_message("❌ Galat jawaab! Dobara koshish karo ya kisi aur ko dimaag lagane do!", ephemeral=True)
 
 
 # --- EVENTS & LOGGING LISTENERS ---
@@ -327,7 +383,6 @@ async def create_quiz(interaction: discord.Interaction, name: str):
         await interaction.response.send_message(f"❌ **'{name}'** naam se quiz pehle se hi exist karti hai!", ephemeral=True)
         return
 
-    # Structure initialization
     quiz_db[quiz_key] = {
         "title": name,
         "creator": interaction.user.name,
@@ -353,13 +408,12 @@ async def add_question(interaction: discord.Interaction, quiz_name: str, questio
         await interaction.response.send_message("❌ Error: Bot ke andar Gemini API Key configured nahi hai!", ephemeral=True)
         return
 
-    # Defer response because AI takes time to think and generate options
     await interaction.response.defer(ephemeral=False)
 
     try:
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        # Fixed: Using gemini-1.5-flash-latest to resolve 404 endpoint issues
+        model = genai.GenerativeModel('gemini-1.5-flash-latest')
         
-        # Super strict system prompt to get clean JSON from Gemini
         prompt = (
             f"You are a quiz master helper bot. For the following question, find the mathematically or contextually accurate correct answer, "
             f"and then generate 3 additional highly relevant but incorrect multiple-choice options. "
@@ -372,13 +426,13 @@ async def add_question(interaction: discord.Interaction, quiz_name: str, questio
         response = model.generate_content(prompt)
         raw_text = response.text.strip()
         
-        # Clean potential markdown block wrappers if AI sends them anyway
         if raw_text.startswith("```json"):
-            raw_text = raw_text.replace("```json", "").replace("```", "").strip()
+            raw_text = raw_text.replace("
+```json", "").replace("```", "").strip()
         elif raw_text.startswith("```"):
-            raw_text = raw_text.replace("```", "").strip()
+            raw_text = raw_text.replace("
+```", "").strip()
 
-        # Parse JSON from AI
         ai_data = json.loads(raw_text)
         
         parsed_question_entry = {
@@ -387,11 +441,9 @@ async def add_question(interaction: discord.Interaction, quiz_name: str, questio
             "correct": ai_data["correct"]
         }
 
-        # Append to database block
         quiz_db[quiz_key]["questions"].append(parsed_question_entry)
         save_json_data(quiz_db, QUIZ_FILE)
 
-        # Build preview embed for approval
         embed = discord.Embed(title=f"🧠 AI Question Processed & Added!", color=discord.Color.purple())
         embed.add_field(name="Quiz Group", value=quiz_db[quiz_key]["title"], inline=True)
         embed.add_field(name="Total Questions Now", value=str(len(quiz_db[quiz_key]["questions"])), inline=True)
@@ -412,6 +464,61 @@ async def add_question(interaction: discord.Interaction, quiz_name: str, questio
     except Exception as e:
         print(f"Quiz AI Generation failed: {e}")
         await interaction.followup.send(f"❌ AI options generation process fail ho gaya! Error: `{str(e)}`")
+
+
+@bot.tree.command(name="start-quiz", description="Launch and stream the full question stack of a quiz group live (Admin Only)")
+@app_commands.checks.has_permissions(manage_messages=True)
+async def start_quiz(interaction: discord.Interaction, quiz_name: str):
+    quiz_db = load_json_data(QUIZ_FILE)
+    quiz_key = quiz_name.lower().replace(" ", "_")
+
+    if quiz_key not in quiz_db or not quiz_db[quiz_key]["questions"]:
+        await interaction.response.send_message(f"❌ Quiz `{quiz_name}` nahi mili ya usme koi questions nahi hain!", ephemeral=True)
+        return
+
+    # Acknowledge command first
+    await interaction.response.send_message(f"🚀 **Starting Quiz:** `{quiz_db[quiz_key]['title']}`! Get ready server crew!", ephemeral=False)
+    channel = interaction.channel
+
+    questions_list = quiz_db[quiz_key]["questions"]
+    
+    # Loop through every question inside the selected quiz setup
+    for idx, q_item in enumerate(questions_list, 1):
+        q_text = q_item["question"]
+        opts = q_item["options"]
+        correct = q_item["correct"]
+
+        # Formulate display layout
+        embed = discord.Embed(
+            title=f"❓ Question {idx} of {len(questions_list)}",
+            description=f"**{q_text}**\n\n" + "\n".join([f"🔹 {o}" for o in opts]),
+            color=discord.Color.blue()
+        )
+        embed.set_footer(text="Aapke paas jawab dene ke liye 30 seconds hain! Faster responses win!")
+
+        view = QuizPlayView(options=opts, correct_answer=correct)
+        msg = await channel.send(embed=embed, view=view)
+
+        # Wait until someone clicks correctly or timeout triggers
+        await view.wait()
+
+        # If nobody gave the right answer during active period
+        if view.answered_correctly_by is None:
+            # Re-fetch or programmatically disable old interactive views
+            for child in view.children:
+                child.disabled = True
+            
+            timeout_embed = discord.Embed(
+                title=f"⏰ Time's Up for Question {idx}!",
+                description=f"**Question:** {q_text}\n\n❌ Kisi ne sahi jawaab nahi diya!\n✅ **Correct Answer:** `{correct}`",
+                color=discord.Color.red()
+            )
+            await msg.edit(embed=timeout_embed, view=view)
+        
+        # Short resting buffer before blasting the next round setup
+        await asyncio.sleep(4.0)
+
+    await channel.send(f"🏁 **QUIZ FINISHED!** `{quiz_db[quiz_key]['title']}` khatam ho chuki hai. Sabhi participants ko shabaashi! 🎉")
 
 
 # --- SNIPE COMMAND ---
