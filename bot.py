@@ -137,24 +137,6 @@ class ColorView(discord.ui.View):
         self.add_item(ColorDropdown())
 
 
-# --- WAVE INTERACTION BUTTON CLASS ---
-class WelcomeView(discord.ui.View):
-    def __init__(self, target_member: discord.Member):
-        super().__init__(timeout=None)
-        self.target_member = target_member
-
-    @discord.ui.button(label="Wave", style=discord.ButtonStyle.blurple, emoji="👋")
-    async def wave_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer()
-        waving_sticker_id = 1512147790975865043 
-        
-        try:
-            sticker = await interaction.guild.fetch_sticker(waving_sticker_id)
-            await interaction.channel.send(f"{interaction.user.mention} waved to {self.target_member.mention}! 👋", stickers=[sticker])
-        except Exception:
-            await interaction.channel.send(f"{interaction.user.mention} waved to {self.target_member.mention}! 👋👋👋")
-
-
 # --- MULTIPLAYER QUIZ LOGIC WITH SPEED-BASED SCORING ---
 class MultiQuizView(discord.ui.View):
     def __init__(self, options, correct_answer, scoreboard):
@@ -211,10 +193,8 @@ class MultiQuizButton(discord.ui.Button):
 async def bump_reminder_loop():
     await bot.wait_until_ready()
     for guild in bot.guilds:
-        # Puraani system ki tarah text keyword se channels match karega
         bump_channel = get_flexible_channel(guild, ["bump", "bot-commands", "general"])
         if bump_channel:
-            # Staff role ko server hierarchy mein search karega
             staff_role = discord.utils.get(guild.roles, name="Staff")
             mention_text = staff_role.mention if staff_role else "@here"
             
@@ -237,10 +217,12 @@ async def bump_reminder_loop():
 # --- EVENTS & LOGGING LISTENERS ---
 @bot.event
 async def on_ready():
-    print(f'🤖 {bot.user.name} is ONLINE & MULTIPLAYER SPEED QUIZ + BUMP SYSTEMS READY!')
+    print(f'🤖 {bot.user.name} is ONLINE & CUSTOM BRANDING SET!')
     bot.add_view(ColorView())
     
-    # Start the automated 2-hour bump loop safely if not running
+    # Custom Activity status showing your name on profile
+    await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name="Abhi9av 👑"))
+    
     if not bump_reminder_loop.is_running():
         bump_reminder_loop.start()
         
@@ -293,11 +275,6 @@ async def on_member_join(member: discord.Member):
         embed.set_footer(text=f"Member #{total_members}")
 
         await welcome_channel.send(content=member.mention, embed=embed)
-
-    general_channel = get_flexible_channel(guild, "general")
-    if general_channel:
-        view = WelcomeView(target_member=member)
-        await general_channel.send(f"Hey crew! {member.mention} has joined the server. Say hi or wave to them! 👋", view=view)
 
 
 # --- DETECT DELETED MESSAGES (SNIPE ENGINE) ---
