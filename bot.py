@@ -6,6 +6,7 @@ from flask import Flask
 import threading
 import datetime
 import json
+import pytz  # Strict Indian Standard Time conversion
 
 # --- INITIAL SETUP & INTENTS ---
 intents = discord.Intents.default()
@@ -13,6 +14,11 @@ intents.members = True
 intents.message_content = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
+
+# --- TIMEZONE HELPER (IST FORCE) ---
+def get_ist_time():
+    ist = pytz.timezone('Asia/Kolkata')
+    return datetime.datetime.now(ist)
 
 # --- FLASK WEB SERVER FOR RENDER ---
 app = Flask('')
@@ -71,7 +77,6 @@ snipe_data = {}
 
 # --- HELPER: DYNAMIC CHANNEL KEYWORD MATCHING ---
 def get_flexible_channel(guild, keywords):
-    # keywords can be a string or a list of strings
     if isinstance(keywords, str):
         keywords = [keywords]
     for channel in guild.text_channels:
@@ -151,7 +156,7 @@ class WelcomeView(discord.ui.View):
 # --- EVENTS & LOGGING LISTENERS ---
 @bot.event
 async def on_ready():
-    print(f'🤖 {bot.user.name} is ONLINE & FLEXIBLE!')
+    print(f'🤖 {bot.user.name} is ONLINE & TIMEZONE CORRECTED!')
     bot.add_view(ColorView())
     try:
         synced = await bot.tree.sync()
@@ -178,7 +183,6 @@ async def on_member_join(member: discord.Member):
         except discord.Forbidden:
             print(f"❌ Failed to assign join roles: Check bot hierarchy!")
 
-    # 1. Flexible Welcome Channel Match
     welcome_channel = get_flexible_channel(guild, "welcome")
     if welcome_channel:
         total_members = len(guild.members)
@@ -191,12 +195,10 @@ async def on_member_join(member: discord.Member):
             color=discord.Color.from_rgb(114, 137, 218)
         )
         
-        # DYNAMIC FIELDS CHECK: Add colors row ONLY if keyword match exists
         color_channel = get_flexible_channel(guild, ["color", "colours"])
         if color_channel:
             embed.add_field(name="🎨 Get Roles", value=f"Head over to {color_channel.mention} to grab your custom colors!", inline=False)
             
-        # DYNAMIC FIELDS CHECK: Add rules row ONLY if keyword match exists
         rules_channel = get_flexible_channel(guild, "rules")
         if rules_channel:
             embed.add_field(name="📜 Server Rules", value=f"Make sure to check out {rules_channel.mention} to keep the community clean.", inline=False)
@@ -206,14 +208,13 @@ async def on_member_join(member: discord.Member):
 
         await welcome_channel.send(content=member.mention, embed=embed)
 
-    # 2. Flexible General Channel Match
     general_channel = get_flexible_channel(guild, "general")
     if general_channel:
         view = WelcomeView(target_member=member)
         await general_channel.send(f"Hey crew! {member.mention} has joined the server. Say hi or wave to them! 👋", view=view)
 
 
-# --- DETECT DELETED MESSAGES (SNIPE ENGINE) ---
+# --- DETECT DELETED MESSAGES (SNIPE ENGINE WITH IST TIME) ---
 @bot.event
 async def on_message_delete(message):
     if message.author.bot or not message.guild:
@@ -222,7 +223,6 @@ async def on_message_delete(message):
     channel_id = str(message.channel.id)
     guild_id = str(message.guild.id)
     
-    # Check memory storage to see if this message was an edited message before deletion
     history_db = load_json_data(SNIPE_FILE)
     msg_id = str(message.id)
     was_edited = msg_id in history_db and history_db[msg_id].get("guild_id") == guild_id
@@ -231,17 +231,17 @@ async def on_message_delete(message):
     if was_edited:
         edit_note = f"\n*(⚠️ Note: This message was edited before deletion. Original: \"{history_db[msg_id]['before']}\")*"
 
-    # Save to transient memory cache for active /snipe command
+    # Fixed to explicit IST
     snipe_data[channel_id] = {
         "content": message.content if message.content else "[No text or attachment contained]",
         "author": message.author.name,
         "avatar": message.author.display_avatar.url,
-        "timestamp": datetime.datetime.now().strftime("%I:%M:%S %p"),
+        "timestamp": get_ist_time().strftime("%I:%M:%S %p"),
         "extra_info": edit_note
     }
 
 
-# --- DETECT EDITED MESSAGES (EDIT GHOST LOGGER WITH SERVER ID) ---
+# --- DETECT EDITED MESSAGES (EDIT GHOST LOGGER WITH SERVER ID & IST TIME) ---
 @bot.event
 async def on_message_edit(before, after):
     if before.author.bot or before.content == after.content or not before.guild:
@@ -249,14 +249,13 @@ async def on_message_edit(before, after):
 
     guild_id = str(before.guild.id)
 
-    # Track message edit states with Guild ID filter to prevent multi-server leaks
     history_db = load_json_data(SNIPE_FILE)
     history_db[str(before.id)] = {
         "guild_id": guild_id,
         "author": before.author.name,
         "before": before.content,
         "after": after.content,
-        "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %I:%M:%S %p")
+        "timestamp": get_ist_time().strftime("%Y-%m-%d %I:%M:%S %p")  # Fixed to explicit IST
     }
     
     if len(history_db) > 100:
@@ -330,7 +329,7 @@ async def snipe(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed)
 
 
-# --- EDIT LOGS COMMAND (FIXED SERVER ISOLATION) ---
+# --- EDIT LOGS COMMAND ---
 @bot.tree.command(name="editlogs", description="Check the ghost edit history of a specific user in this server")
 @app_commands.checks.has_permissions(manage_messages=True)
 async def editlogs(interaction: discord.Interaction, member: discord.Member):
@@ -338,7 +337,6 @@ async def editlogs(interaction: discord.Interaction, member: discord.Member):
     current_guild_id = str(interaction.guild.id)
     user_logs = []
 
-    # Strict multi-server isolation filter
     for msg_id, log in history_db.items():
         if log.get("author") == member.name and log.get("guild_id") == current_guild_id:
             user_logs.append(log)
