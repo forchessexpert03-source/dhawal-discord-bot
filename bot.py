@@ -7,7 +7,6 @@ import threading
 import datetime
 import json
 import pytz  
-import google.generativeai as genai
 import asyncio
 
 # --- INITIAL SETUP & INTENTS ---
@@ -16,13 +15,6 @@ intents.members = True
 intents.message_content = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
-
-# --- GEMINI AI CONFIGURATION (STABLE CORE SETUP) ---
-GEMINI_KEY = os.environ.get("GEMINI_API_KEY")
-if GEMINI_KEY:
-    genai.configure(api_key=GEMINI_KEY)
-else:
-    print("⚠️ WARNING: GEMINI_API_KEY environment variable not found!")
 
 # --- TIMEZONE HELPER (IST FORCE) ---
 def get_ist_time():
@@ -215,7 +207,7 @@ class QuizButton(discord.ui.Button):
 # --- EVENTS & LOGGING LISTENERS ---
 @bot.event
 async def on_ready():
-    print(f'🤖 {bot.user.name} is ONLINE & ENGINE UPGRADED!')
+    print(f'🤖 {bot.user.name} is ONLINE & MANUAL QUIZ ENGINE READY!')
     bot.add_view(ColorView())
     try:
         synced = await bot.tree.sync()
@@ -365,7 +357,7 @@ async def on_message(message):
     await bot.process_commands(message)
 
 
-# --- AI QUIZ ENGINE COMMANDS ---
+# --- PURE MANUAL QUIZ ENGINE COMMANDS ---
 
 @bot.tree.command(name="create-quiz", description="Initialize a new empty quiz group (Admin Only)")
 @app_commands.checks.has_permissions(manage_messages=True)
@@ -385,12 +377,12 @@ async def create_quiz(interaction: discord.Interaction, name: str):
     }
 
     save_json_data(quiz_db, QUIZ_FILE)
-    await interaction.response.send_message(f"✅ **Quiz Created Successfully!**\nGroup Name: `{name}`\nAb aap `/add-question` use karke isme AI-powered sawaal daal sakte hain!")
+    await interaction.response.send_message(f"✅ **Quiz Created Successfully!**\nGroup Name: `{name}`\nAb aap `/add-question` use karke isme manually sawaal daal sakte hain!")
 
 
-@bot.tree.command(name="add-question", description="Submit a raw question statement; AI will auto-generate 4 accurate options (Admin Only)")
+@bot.tree.command(name="add-question", description="Manually add a question, options, and correct answer (Admin Only)")
 @app_commands.checks.has_permissions(manage_messages=True)
-async def add_question(interaction: discord.Interaction, quiz_name: str, question: str):
+async def add_question(interaction: discord.Interaction, quiz_name: str, question: str, options: str, correct_answer: str):
     quiz_db = load_json_data(QUIZ_FILE)
     quiz_key = quiz_name.lower().replace(" ", "_")
 
@@ -398,68 +390,51 @@ async def add_question(interaction: discord.Interaction, quiz_name: str, questio
         await interaction.response.send_message(f"❌ Quiz `{quiz_name}` nahi mili! Pehle `/create-quiz` chalao.", ephemeral=True)
         return
 
-    if not GEMINI_KEY:
-        await interaction.response.send_message("❌ Error: Bot ke andar Gemini API Key configured nahi hai!", ephemeral=True)
-        return
-
     await interaction.response.defer(ephemeral=False)
 
-    # Foolproof Stable Custom Identifiers
     try:
-        try:
-            # Using absolute stable fallback model to bypass v1beta restrictions completely
-            model = genai.GenerativeModel('gemini-1.5-pro')
-        except Exception:
-            model = genai.GenerativeModel('gemini-pro')
-        
-        prompt = (
-            f"You are a quiz master helper bot. For the following question, find the mathematically or contextually accurate correct answer, "
-            f"and then generate 3 additional highly relevant but incorrect multiple-choice options. "
-            f"Your output must be strictly in raw valid JSON format without markdown ticks, like this:\n"
-            f'{{"correct": "Correct Answer Value", "options": ["Option 1", "Option 2", "Option 3", "Option 4"]}}\n'
-            f"Note that the correct answer MUST be one of the items inside the 4 items of the options array list! "
-            f"Mix the correct answer position randomly inside the array. Here is the question: {question}"
-        )
+        # Options ko comma se split karenge aur extra spaces remove karenge
+        parsed_options = [opt.strip() for opt in options.split(",")]
+        correct_answer_clean = correct_answer.strip()
 
-        response = model.generate_content(prompt)
-        raw_text = response.text.strip()
-        
-        if raw_text.startswith("```json"):
-            raw_text = raw_text.replace("```json", "").replace("```", "").strip()
-        elif raw_text.startswith("```"):
-            raw_text = raw_text.replace("```", "").strip()
+        # Validation: Check karenge ki correct answer options me maujood hai ya nahi
+        if correct_answer_clean not in parsed_options:
+            await interaction.followup.send(f"❌ **Error:** Aapka diya gaya correct answer (`{correct_answer_clean}`) options ki list se match nahi ho raha hai! Koshish karein ki spelling bilkul same ho.")
+            return
 
-        ai_data = json.loads(raw_text)
-        
+        if len(parsed_options) < 2:
+            await interaction.followup.send("❌ **Error:** Sawaal me kam se kam 2 options dena zaroori hai!")
+            return
+
         parsed_question_entry = {
             "question": question,
-            "options": ai_data["options"],
-            "correct": ai_data["correct"]
+            "options": parsed_options,
+            "correct": correct_answer_clean
         }
 
         quiz_db[quiz_key]["questions"].append(parsed_question_entry)
         save_json_data(quiz_db, QUIZ_FILE)
 
-        embed = discord.Embed(title=f"🧠 AI Question Processed & Added!", color=discord.Color.purple())
+        embed = discord.Embed(title=f"📝 Question Added Manually!", color=discord.Color.green())
         embed.add_field(name="Quiz Group", value=quiz_db[quiz_key]["title"], inline=True)
         embed.add_field(name="Total Questions Now", value=str(len(quiz_db[quiz_key]["questions"])), inline=True)
         embed.add_field(name="💬 Question Statement", value=question, inline=False)
         
         options_preview = ""
-        for idx, opt in enumerate(ai_data["options"], 1):
+        for idx, opt in enumerate(parsed_options, 1):
             marker = "🔹"
-            if opt == ai_data["correct"]:
+            if opt == correct_answer_clean:
                 marker = "✅ (Correct)"
             options_preview += f"{idx}. {opt} {marker}\n"
             
-        embed.add_field(name="📋 Auto Generated Options", value=options_preview, inline=False)
-        embed.set_footer(text="Powered by Google Gemini Stable Engine")
+        embed.add_field(name="📋 Options Entered", value=options_preview, inline=False)
+        embed.set_footer(text="Manual Input Mode — 100% Stable")
 
         await interaction.followup.send(embed=embed)
 
     except Exception as e:
-        print(f"Quiz AI Generation failed: {e}")
-        await interaction.followup.send(f"❌ AI options generation process fail ho gaya! Error: `{str(e)}`")
+        print(f"Error adding manual question: {e}")
+        await interaction.followup.send(f"❌ Question add karne mein dikkat aayi! Error: `{str(e)}`")
 
 
 @bot.tree.command(name="start-quiz", description="Launch and stream the full question stack of a quiz group live (Admin Only)")
