@@ -165,20 +165,19 @@ class WelcomeView(discord.ui.View):
 
 # --- INTERACTIVE QUIZ PLAY BUTTONS VIEW ---
 class QuizPlayView(discord.ui.View):
-    def __init__(self, options, correct_answer):
-        super().__init__(timeout=30.0)  # 30 Seconds overall timer for answering
+    def __init__(self, options, correct_answer, question_idx):
+        super().__init__(timeout=30.0)
         self.options = options
         self.correct_answer = correct_answer
         self.answered_correctly_by = None
         
-        # Add a custom button for each choice dynamically
         prefixes = ["A", "B", "C", "D"]
         for i, option in enumerate(options):
             if i >= 4: break
-            self.add_item(QuizButton(label=f"{prefixes[i]}. {option}", value=option, custom_id=f"quiz_opt_{i}"))
+            # Added question_idx to custom_id to keep buttons absolutely unique across questions
+            self.add_item(QuizButton(label=f"{prefixes[i]}. {option}", value=option, custom_id=f"q_{question_idx}_opt_{i}"))
 
     async def on_timeout(self):
-        # Disable all items when the session closes
         for item in self.children:
             item.disabled = True
         self.stop()
@@ -192,18 +191,15 @@ class QuizButton(discord.ui.Button):
     async def callback(self, interaction: discord.Interaction):
         view: QuizPlayView = self.view
         
-        # Check if the clicked button matches the accurate database entry
         if self.value == view.correct_answer:
             view.answered_correctly_by = interaction.user
             self.style = discord.ButtonStyle.success
             
-            # Disable everything since round is finished
             for child in view.children:
                 child.disabled = True
                 
             view.stop()
             
-            # Award +15 XP instantly inside current session database
             level_db = load_json_data(LEVELS_FILE)
             u_id = str(interaction.user.id)
             if u_id not in level_db:
@@ -212,9 +208,8 @@ class QuizButton(discord.ui.Button):
             save_json_data(level_db, LEVELS_FILE)
             
             await interaction.response.edit_message(view=view)
-            await interaction.followup.send(f"🎉 **SAHI JAWAAB!** {interaction.user.mention} ne sabse pehle correct option chunna! Aur unhe milte hain **+15 XP**! 🏆")
+            await interaction.followup.send(f"🎉 **SAHI JAWAAB!** {interaction.user.mention} ne sabse pehle correct option chuna! Aur unhe milte hain **+15 XP**! 🏆")
         else:
-            # Ephemeral response so other server mates don't get distracted by wrong guesses
             await interaction.response.send_message("❌ Galat jawaab! Dobara koshish karo ya kisi aur ko dimaag lagane do!", ephemeral=True)
 
 
@@ -411,7 +406,6 @@ async def add_question(interaction: discord.Interaction, quiz_name: str, questio
     await interaction.response.defer(ephemeral=False)
 
     try:
-        # Fixed: Using gemini-1.5-flash-latest to resolve 404 endpoint issues
         model = genai.GenerativeModel('gemini-1.5-flash-latest')
         
         prompt = (
@@ -427,11 +421,9 @@ async def add_question(interaction: discord.Interaction, quiz_name: str, questio
         raw_text = response.text.strip()
         
         if raw_text.startswith("```json"):
-            raw_text = raw_text.replace("
-```json", "").replace("```", "").strip()
+            raw_text = raw_text.replace("```json", "").replace("```", "").strip()
         elif raw_text.startswith("```"):
-            raw_text = raw_text.replace("
-```", "").strip()
+            raw_text = raw_text.replace("```", "").strip()
 
         ai_data = json.loads(raw_text)
         
@@ -476,19 +468,16 @@ async def start_quiz(interaction: discord.Interaction, quiz_name: str):
         await interaction.response.send_message(f"❌ Quiz `{quiz_name}` nahi mili ya usme koi questions nahi hain!", ephemeral=True)
         return
 
-    # Acknowledge command first
     await interaction.response.send_message(f"🚀 **Starting Quiz:** `{quiz_db[quiz_key]['title']}`! Get ready server crew!", ephemeral=False)
     channel = interaction.channel
 
     questions_list = quiz_db[quiz_key]["questions"]
     
-    # Loop through every question inside the selected quiz setup
     for idx, q_item in enumerate(questions_list, 1):
         q_text = q_item["question"]
         opts = q_item["options"]
         correct = q_item["correct"]
 
-        # Formulate display layout
         embed = discord.Embed(
             title=f"❓ Question {idx} of {len(questions_list)}",
             description=f"**{q_text}**\n\n" + "\n".join([f"🔹 {o}" for o in opts]),
@@ -496,15 +485,13 @@ async def start_quiz(interaction: discord.Interaction, quiz_name: str):
         )
         embed.set_footer(text="Aapke paas jawab dene ke liye 30 seconds hain! Faster responses win!")
 
-        view = QuizPlayView(options=opts, correct_answer=correct)
+        # Passed idx to keep view layout absolutely secure
+        view = QuizPlayView(options=opts, correct_answer=correct, question_idx=idx)
         msg = await channel.send(embed=embed, view=view)
 
-        # Wait until someone clicks correctly or timeout triggers
         await view.wait()
 
-        # If nobody gave the right answer during active period
         if view.answered_correctly_by is None:
-            # Re-fetch or programmatically disable old interactive views
             for child in view.children:
                 child.disabled = True
             
@@ -515,7 +502,6 @@ async def start_quiz(interaction: discord.Interaction, quiz_name: str):
             )
             await msg.edit(embed=timeout_embed, view=view)
         
-        # Short resting buffer before blasting the next round setup
         await asyncio.sleep(4.0)
 
     await channel.send(f"🏁 **QUIZ FINISHED!** `{quiz_db[quiz_key]['title']}` khatam ho chuki hai. Sabhi participants ko shabaashi! 🎉")
