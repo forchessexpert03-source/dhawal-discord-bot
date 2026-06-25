@@ -17,12 +17,10 @@ intents.message_content = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# --- GEMINI AI CONFIGURATION (STABLE FORCED ENDPOINT) ---
+# --- GEMINI AI CONFIGURATION (STABLE CORE SETUP) ---
 GEMINI_KEY = os.environ.get("GEMINI_API_KEY")
 if GEMINI_KEY:
-    # Google API core level par stable environment configure kar rahe hain
     genai.configure(api_key=GEMINI_KEY)
-    os.environ["ST_GOOGLE_GENAI_API_VERSION"] = "v1" 
 else:
     print("⚠️ WARNING: GEMINI_API_KEY environment variable not found!")
 
@@ -406,16 +404,13 @@ async def add_question(interaction: discord.Interaction, quiz_name: str, questio
 
     await interaction.response.defer(ephemeral=False)
 
-    # Permanent Stable Fallback Router Method
+    # Foolproof Stable Custom Identifiers
     try:
         try:
-            # Plan A: Strictly forcing standard production model text engine path
-            model = genai.GenerativeModel('gemini-1.5-flash')
-            print("Trying model standard tier...")
+            # Using absolute stable fallback model to bypass v1beta restrictions completely
+            model = genai.GenerativeModel('gemini-1.5-pro')
         except Exception:
-            # Plan B: Safe legacy tier that completely ignores API engine endpoint routing conflicts
             model = genai.GenerativeModel('gemini-pro')
-            print("Fallback triggered: Using gemini-pro tier setup.")
         
         prompt = (
             f"You are a quiz master helper bot. For the following question, find the mathematically or contextually accurate correct answer, "
