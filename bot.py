@@ -1,6 +1,6 @@
 import os
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 from discord import app_commands
 from flask import Flask
 import threading
@@ -57,8 +57,7 @@ QUOTES = [
     "“The best way to predict your future is to create it.”"
 ]
 
-# --- DATABASES (LEVELS, SNIPE, & QUIZ STORAGE) ---
-LEVELS_FILE = "levels.json"
+# --- DATABASES (SNIPE, & QUIZ STORAGE) ---
 SNIPE_FILE = "snipe_logs.json"
 QUIZ_FILE = "quizzes.json"
 
@@ -159,12 +158,12 @@ class WelcomeView(discord.ui.View):
 # --- MULTIPLAYER QUIZ LOGIC WITH SPEED-BASED SCORING ---
 class MultiQuizView(discord.ui.View):
     def __init__(self, options, correct_answer, scoreboard):
-        super().__init__(timeout=15.0)  # Pure 15 seconds timer per question
+        super().__init__(timeout=15.0)  
         self.options = options
         self.correct_answer = correct_answer
         self.scoreboard = scoreboard
         self.start_time = time.time()
-        self.answered_users = set()  # Tracks who already pressed a button this turn
+        self.answered_users = set()  
 
         prefixes = ["A", "B", "C", "D"]
         for i, option in enumerate(options):
@@ -187,7 +186,6 @@ class MultiQuizButton(discord.ui.Button):
         user = interaction.user
         user_id = str(user.id)
 
-        # Check agar user pehle hi is question par click kar chuka hai
         if user_id in view.answered_users:
             await interaction.response.send_message("❌ Aap is question par apna attempt le chuke hain!", ephemeral=True)
             return
@@ -196,7 +194,6 @@ class MultiQuizButton(discord.ui.Button):
         time_taken = time.time() - view.start_time
 
         if self.value == view.correct_answer:
-            # Dynamic Speed Point Calculation: Max 100 points, har second delay par points kam honge
             points_earned = max(20, int(100 - (time_taken * 5.33))) 
 
             if user_id not in view.scoreboard:
@@ -204,23 +201,49 @@ class MultiQuizButton(discord.ui.Button):
             
             view.scoreboard[user_id]["points"] += points_earned
 
-            # Give a small background levels system boost
-            level_db = load_json_data(LEVELS_FILE)
-            if user_id not in level_db:
-                level_db[user_id] = {"xp": 0, "level": 0}
-            level_db[user_id]["xp"] += 10
-            save_json_data(level_db, LEVELS_FILE)
-
             await interaction.response.send_message(f"✅ **Sahi Jawab!** Aapne **{time_taken:.2f}s** mein answer kiya aur paaye **+{points_earned} Points**! ⚡", ephemeral=True)
         else:
             await interaction.response.send_message("❌ **Galat Jawab!** Is question mein aapko 0 points mile.", ephemeral=True)
 
 
+# --- AUTOMATED BUMP REMINDER TASK LOOP (Every 2 Hours) ---
+@tasks.loop(hours=2.0)
+async def bump_reminder_loop():
+    await bot.wait_until_ready()
+    for guild in bot.guilds:
+        # Puraani system ki tarah text keyword se channels match karega
+        bump_channel = get_flexible_channel(guild, ["bump", "bot-commands", "general"])
+        if bump_channel:
+            # Staff role ko server hierarchy mein search karega
+            staff_role = discord.utils.get(guild.roles, name="Staff")
+            mention_text = staff_role.mention if staff_role else "@here"
+            
+            embed = discord.Embed(
+                title="⏰ SERVER BUMP TIME! ⏰",
+                description=(
+                    f"Hey {mention_text}! **2 ghante poore ho chuke hain.**\n\n"
+                    "Server ki growth ke liye please Disboard ya custom bumper use karke server ko bump karein!\n"
+                    "👉 `/bump` type karke boom karein!"
+                ),
+                color=discord.Color.gold()
+            )
+            embed.set_footer(text="Automated Growth Management System")
+            try:
+                await bump_channel.send(content=mention_text, embed=embed)
+            except Exception as e:
+                print(f"Error sending bump reminder to guild {guild.name}: {e}")
+
+
 # --- EVENTS & LOGGING LISTENERS ---
 @bot.event
 async def on_ready():
-    print(f'🤖 {bot.user.name} is ONLINE & MULTIPLAYER SPEED QUIZ SYSTEM READY!')
+    print(f'🤖 {bot.user.name} is ONLINE & MULTIPLAYER SPEED QUIZ + BUMP SYSTEMS READY!')
     bot.add_view(ColorView())
+    
+    # Start the automated 2-hour bump loop safely if not running
+    if not bump_reminder_loop.is_running():
+        bump_reminder_loop.start()
+        
     try:
         synced = await bot.tree.sync()
         print(f"Synced {len(synced)} command(s) globally")
@@ -327,46 +350,20 @@ async def on_message_edit(before, after):
     save_json_data(history_db, SNIPE_FILE)
 
 
-# --- SPAM COUNTER FOR XP TRACKING ---
-@bot.event
-async def on_message(message):
-    if message.author.bot:
-        return
-
-    user_id = str(message.author.id)
-    level_db = load_json_data(LEVELS_FILE)
-
-    if user_id not in level_db:
-        level_db[user_id] = {"xp": 0, "level": 0}
-
-    level_db[user_id]["xp"] += 1
-    current_xp = level_db[user_id]["xp"]
-    current_lvl = level_db[user_id]["level"]
-
-    next_lvl_xp = (current_lvl + 1) * 15
-
-    if current_xp >= next_lvl_xp:
-        level_db[user_id]["level"] += 1
-        new_lvl = level_db[user_id]["level"]
-        
-        await message.channel.send(f"🔥 **LEVEL UP!** {message.author.mention} just hit **Level {new_lvl}**! Bakchodi chalte rehni chahiye! 🎉")
-
-        if new_lvl == 10:
-            guild = message.guild
-            newbies_role = discord.utils.get(guild.roles, name="Newbies")
-            mehmaan_role = discord.utils.get(guild.roles, name="Mehmaan")
-
-            try:
-                if newbies_role in message.author.roles:
-                    await message.author.remove_roles(newbies_role)
-                if mehmaan_role:
-                    await message.author.add_roles(mehmaan_role)
-                    await message.channel.send(f"👑 {message.author.mention} ab Newbie nahi rahe! Unhe **Mehmaan** ka V.I.P darja mil chuka hai!")
-            except discord.Forbidden:
-                print("❌ Role swap failed: Check bot hierarchy layout permissions.")
-
-    save_json_data(level_db, LEVELS_FILE)
-    await bot.process_commands(message)
+# --- BUMP SLASH COMMAND ---
+@bot.tree.command(name="bump", description="Bump the server to boost rankings and visibility!")
+async def bump(interaction: discord.Interaction):
+    embed = discord.Embed(
+        title="🚀 SERVER BUMPED SUCCESSFULLY!",
+        description=(
+            f"Thank you {interaction.user.mention}! **{interaction.guild.name}** has been successfully bumped!\n\n"
+            "📈 Visibility increased on listing boards. Agla auto-reminder **2 ghante** mein staff ko mil jayega."
+        ),
+        color=discord.Color.green()
+    )
+    embed.set_thumbnail(url=interaction.guild.icon.url if interaction.guild.icon else None)
+    embed.set_footer(text=f"Bumped by {interaction.user.name}")
+    await interaction.response.send_message(embed=embed)
 
 
 # --- MANUAL & MULTIPLAYER QUIZ COMMANDS ---
@@ -409,11 +406,11 @@ async def add_question(interaction: discord.Interaction, quiz_name: str, questio
         correct_answer_clean = correct_answer.strip()
 
         if correct_answer_clean not in parsed_options:
-            await interaction.followup.send(f"❌ **Error:** Aapka diya gaya correct answer (`{correct_answer_clean}`) options ki list se match nahi ho raha hai! Spelling check karein.")
+            await interaction.followup.send(f"❌ **Error:** Correct answer ({correct_answer_clean}) options se match nahi ho raha!")
             return
 
         if len(parsed_options) < 2:
-            await interaction.followup.send("❌ **Error:** Sawaal me kam se kam 2 options dena zaroori hai!")
+            await interaction.followup.send("❌ **Error:** Kam se kam 2 options dena zaroori hai!")
             return
 
         parsed_question_entry = {
@@ -438,13 +435,10 @@ async def add_question(interaction: discord.Interaction, quiz_name: str, questio
             options_preview += f"{idx}. {opt} {marker}\n"
             
         embed.add_field(name="📋 Options Entered", value=options_preview, inline=False)
-        embed.set_footer(text="Manual Input Mode — 100% Stable")
-
         await interaction.followup.send(embed=embed)
 
     except Exception as e:
-        print(f"Error adding manual question: {e}")
-        await interaction.followup.send(f"❌ Question add karne mein dikkat aayi! Error: `{str(e)}`")
+        await interaction.followup.send(f"❌ Question add karne mein dikkat aayi: `{str(e)}`")
 
 
 @bot.tree.command(name="remove-question", description="Remove a specific question from a quiz using its number (Admin Only)")
@@ -465,7 +459,7 @@ async def remove_question(interaction: discord.Interaction, quiz_name: str, ques
         return
 
     if question_number < 1 or question_number > total_q:
-        await interaction.response.send_message(f"❌ Invalid question number! Is quiz mein total `{total_q}` questions hain.", ephemeral=True)
+        await interaction.response.send_message(f"❌ Invalid question number! Total `{total_q}` questions hain.", ephemeral=True)
         return
 
     await interaction.response.defer(ephemeral=False)
@@ -480,12 +474,10 @@ async def remove_question(interaction: discord.Interaction, quiz_name: str, ques
         embed.add_field(name="Removed Question #", value=str(question_number), inline=True)
         embed.add_field(name="Remaining Questions", value=str(len(questions_list)), inline=True)
         embed.add_field(name="💬 Removed Content", value=removed_q["question"], inline=False)
-        embed.set_footer(text="Database updated safely")
 
         await interaction.followup.send(embed=embed)
 
     except Exception as e:
-        print(f"Error removing question: {e}")
         await interaction.followup.send(f"❌ Question remove karne mein error aaya: `{str(e)}`")
 
 
@@ -499,7 +491,7 @@ async def start_quiz(interaction: discord.Interaction, quiz_name: str):
         await interaction.response.send_message(f"❌ Quiz `{quiz_name}` nahi mili ya usme koi questions nahi hain!", ephemeral=True)
         return
 
-    await interaction.response.send_message(f"🚀 **MULTIPLAYER ARENA ACTIVE!**\nQuiz: `{quiz_db[quiz_key]['title']}`\n\n⚡ **Rules:** Har question ke liye sirf **15 Seconds** milenge. Jo jitna tez tap kareya, utne zyada points milenge! Ready ho jao crew!", ephemeral=False)
+    await interaction.response.send_message(f"🚀 **MULTIPLAYER ARENA ACTIVE!**\nQuiz: `{quiz_db[quiz_key]['title']}`\n\n⚡ **Rules:** Har question ke liye sirf **15 Seconds** milenge. Ready ho jao crew!", ephemeral=False)
     channel = interaction.channel
 
     questions_list = quiz_db[quiz_key]["questions"]
@@ -515,7 +507,7 @@ async def start_quiz(interaction: discord.Interaction, quiz_name: str):
             description=f"### {q_text}\n\n" + "\n".join([f"🔹 {o}" for o in opts]),
             color=discord.Color.blurple()
         )
-        embed.set_footer(text="Timer: 15 Seconds! Tap fast to extract max points!")
+        embed.set_footer(text="Timer: 15 Seconds! Tap fast!")
 
         view = MultiQuizView(options=opts, correct_answer=correct, scoreboard=session_scoreboard)
         msg = await channel.send(embed=embed, view=view)
@@ -534,7 +526,6 @@ async def start_quiz(interaction: discord.Interaction, quiz_name: str):
 
         # --- LIVE LEADERBOARD DISPLAY ---
         sorted_board = sorted(session_scoreboard.values(), key=lambda x: x["points"], reverse=True)
-        
         board_text = ""
         medals = ["🥇", "🥈", "🥉", "✨"]
         for rank, p_data in enumerate(sorted_board[:10], 1):
@@ -555,7 +546,6 @@ async def start_quiz(interaction: discord.Interaction, quiz_name: str):
 
     # --- FINAL STANDINGS GENERATION ---
     final_sorted = sorted(session_scoreboard.values(), key=lambda x: x["points"], reverse=True)
-    
     final_text = ""
     for rank, p_data in enumerate(final_sorted, 1):
         if rank == 1:
@@ -575,8 +565,6 @@ async def start_quiz(interaction: discord.Interaction, quiz_name: str):
         description=final_text,
         color=discord.Color.green()
     )
-    final_embed.set_footer(text="Mubarak ho saare winners ko! Game Over.")
-    
     await channel.send(embed=final_embed)
 
 
@@ -584,21 +572,14 @@ async def start_quiz(interaction: discord.Interaction, quiz_name: str):
 @bot.tree.command(name="snipe", description="Catch the last deleted message in this channel instantly")
 async def snipe(interaction: discord.Interaction):
     channel_id = str(interaction.channel.id)
-    
     if channel_id not in snipe_data:
-        await interaction.response.send_message("🔍 Is channel me mujhe koi bhi haal hi me deleted message nahi mila!", ephemeral=True)
+        await interaction.response.send_message("🔍 Is channel me koi bhi deleted message nahi mila!", ephemeral=True)
         return
 
     data = snipe_data[channel_id]
-    
-    embed = discord.Embed(
-        title="🎯 Message Sniped!",
-        description=f"{data['content']}{data['extra_info']}",
-        color=discord.Color.red()
-    )
+    embed = discord.Embed(title="🎯 Message Sniped!", description=f"{data['content']}{data['extra_info']}", color=discord.Color.red())
     embed.set_author(name=f"Sent by {data['author']}", icon_url=data['avatar'])
     embed.set_footer(text=f"Deleted at {data['timestamp']}")
-    
     await interaction.response.send_message(embed=embed)
 
 
@@ -615,50 +596,13 @@ async def editlogs(interaction: discord.Interaction, member: discord.Member):
             user_logs.append(log)
 
     if not user_logs:
-        await interaction.response.send_message(f"🔍 **{member.name}** ne *iss server me* haal hi me koi message edit nahi kiya hai!", ephemeral=True)
+        await interaction.response.send_message(f"🔍 **{member.name}** ne koi message edit nahi kiya hai!", ephemeral=True)
         return
 
     user_logs.reverse()
-    latest_logs = user_logs[:5]
-
-    embed = discord.Embed(
-        title=f"🕵️‍♂️ Ghost Edit Logs: {member.name}",
-        description=f"Pichle kuch edited messages (Only in {interaction.guild.name}):",
-        color=discord.Color.orange()
-    )
-    embed.set_thumbnail(url=member.display_avatar.url)
-
-    for idx, log in enumerate(latest_logs, 1):
-        embed.add_field(
-            name=f"📝 Edit #{idx} ({log['timestamp']})",
-            value=f"**Before:** {log['before']}\n**After:** {log['after']}",
-            inline=False
-        )
-
-    await interaction.response.send_message(embed=embed)
-
-
-# --- LEVEL COMMAND ---
-@bot.tree.command(name="level", description="Check your current chat status level and message progress")
-async def level(interaction: discord.Interaction, member: discord.Member = None):
-    target_user = member or interaction.user
-    user_id = str(target_user.id)
-    level_db = load_json_data(LEVELS_FILE)
-
-    if user_id not in level_db:
-        await interaction.response.send_message(f"📊 **{target_user.name}** ne abhi tak chat shuru nahi ki hai! Level: 0 (0 Messages)", ephemeral=False)
-        return
-
-    lvl = level_db[user_id]["level"]
-    xp = level_db[user_id]["xp"]
-    next_xp = (lvl + 1) * 15
-
-    embed = discord.Embed(title=f"📊 {target_user.name}'s Level Stats", color=discord.Color.green())
-    embed.add_field(name="Current Level", value=f"✨ **Level {lvl}**", inline=True)
-    embed.add_field(name="Total Messages Sent", value=f"💬 **{xp} Messages**", inline=True)
-    embed.add_field(name="Next Level At", value=f"📈 **{next_xp} Messages**", inline=False)
-    embed.set_thumbnail(url=target_user.display_avatar.url)
-    
+    embed = discord.Embed(title=f"🕵️‍♂️ Ghost Edit Logs: {member.name}", color=discord.Color.orange())
+    for idx, log in enumerate(user_logs[:5], 1):
+        embed.add_field(name=f"📝 Edit #{idx} ({log['timestamp']})", value=f"**Before:** {log['before']}\n**After:** {log['after']}", inline=False)
     await interaction.response.send_message(embed=embed)
 
 
@@ -678,27 +622,12 @@ async def sync(ctx):
 async def setupcolors(interaction: discord.Interaction):
     embed = discord.Embed(
         title="🌈 SERVER PROFILE COLORS",
-        description=(
-            "Welcome! Customize your username color in this server by selecting a vibe from the dropdown menu below.\n\n"
-            "🔴 **Red** — Bold & Fierce\n"
-            "🔵 **Blue** — Chill & Calm\n"
-            "🟢 **Green** — Fresh & Creative\n"
-            "🟡 **Yellow** — Bright & Energetic\n"
-            "🟠 **Orange** — Wild & Vibrant\n"
-            "🟣 **Purple** — Royal & Mystery\n"
-            "🌸 **Pink** — Aesthetic & Cute\n\n"
-            "**How it works:**\n"
-            "1. Click the dropdown menu below.\n"
-            "2. Select your favorite color.\n"
-            "3. Want to change or remove it? Just select a new one or click the same color again!"
-        ),
+        description="Select a vibe from the dropdown menu below to customize your role color!",
         color=discord.Color.from_rgb(231, 76, 60)
     )
-    embed.set_footer(text="Dhawal Custom Management System")
     await interaction.response.send_message(embed=embed, view=ColorView())
 
 # --- BASIC UTILITY & MODERATION SLASH COMMANDS ---
-
 @bot.tree.command(name="ping", description="Test bot response speed")
 async def ping(interaction: discord.Interaction):
     await interaction.response.send_message(f"Pong! {round(bot.latency * 1000)}ms")
@@ -708,14 +637,12 @@ async def serverinfo(interaction: discord.Interaction):
     guild = interaction.guild
     embed = discord.Embed(title=f"{guild.name} Info", color=discord.Color.blue())
     embed.add_field(name="Total Members", value=guild.member_count, inline=True)
-    embed.add_field(name="Created At", value=guild.created_at.strftime("%B %d, %Y"), inline=True)
-    embed.set_thumbnail(url=guild.icon.url if guild.icon else None)
     await interaction.response.send_message(embed=embed)
 
 @bot.tree.command(name="avatar", description="View or download someone's profile picture")
 async def avatar(interaction: discord.Interaction, member: discord.Member = None):
     member = member or interaction.user
-    embed = discord.Embed(title=f"{member.name}'s Avatar", color=discord.Color.random())
+    embed = discord.Embed(title=f"{member.name}'s Avatar")
     embed.set_image(url=member.display_avatar.url)
     await interaction.response.send_message(embed=embed)
 
@@ -733,20 +660,20 @@ async def purge(interaction: discord.Interaction, amount: int):
 @app_commands.checks.has_permissions(kick_members=True)
 async def kick(interaction: discord.Interaction, member: discord.Member, reason: str = "No reason provided"):
     await member.kick(reason=reason)
-    await interaction.response.send_message(f"🚨 **{member.name}** has been kicked. Reason: {reason}")
+    await interaction.response.send_message(f"🚨 **{member.name}** has been kicked.")
 
 @bot.tree.command(name="ban", description="Ban a member from the server")
 @app_commands.checks.has_permissions(ban_members=True)
 async def ban(interaction: discord.Interaction, member: discord.Member, reason: str = "No reason provided"):
     await member.ban(reason=reason)
-    await interaction.response.send_message(f"🔨 **{member.name}** has been banned permanently. Reason: {reason}")
+    await interaction.response.send_message(f"🔨 **{member.name}** has been banned permanently.")
 
 @bot.tree.command(name="mute", description="Mute (Timeout) a member")
 @app_commands.checks.has_permissions(moderate_members=True)
 async def mute(interaction: discord.Interaction, member: discord.Member, duration_minutes: int = 10, reason: str = "No reason provided"):
     duration = datetime.timedelta(minutes=duration_minutes)
     await member.timeout(duration, reason=reason)
-    await interaction.response.send_message(f"🔇 **{member.name}** has been muted for {duration_minutes} minutes. Reason: {reason}")
+    await interaction.response.send_message(f"🔇 **{member.name}** has been muted for {duration_minutes} minutes.")
 
 @bot.tree.command(name="unmute", description="Remove mute (Timeout) from a member")
 @app_commands.checks.has_permissions(moderate_members=True)
@@ -759,7 +686,6 @@ async def unmute(interaction: discord.Interaction, member: discord.Member, reaso
 async def warn(interaction: discord.Interaction, member: discord.Member, reason: str = "No reason provided"):
     embed = discord.Embed(title="⚠️ Warning Issued", color=discord.Color.orange())
     embed.add_field(name="User", value=member.mention, inline=True)
-    embed.add_field(name="Moderator", value=interaction.user.mention, inline=True)
     embed.add_field(name="Reason", value=reason, inline=False)
     await interaction.response.send_message(content=member.mention, embed=embed)
 
