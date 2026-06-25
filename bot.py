@@ -8,6 +8,7 @@ import datetime
 import json
 import pytz  
 import asyncio
+import time
 
 # --- INITIAL SETUP & INTENTS ---
 intents = discord.Intents.default()
@@ -155,18 +156,20 @@ class WelcomeView(discord.ui.View):
             await interaction.channel.send(f"{interaction.user.mention} waved to {self.target_member.mention}! 👋👋👋")
 
 
-# --- INTERACTIVE QUIZ PLAY BUTTONS VIEW ---
-class QuizPlayView(discord.ui.View):
-    def __init__(self, options, correct_answer, question_idx):
-        super().__init__(timeout=30.0)
+# --- NEW MULTIPLAYER QUIZ LOGIC WITH SPEED-BASED SCORING ---
+class MultiQuizView(discord.ui.View):
+    def __init__(self, options, correct_answer, scoreboard):
+        super().__init__(timeout=15.0)  # Pure 15 seconds timer per question
         self.options = options
         self.correct_answer = correct_answer
-        self.answered_correctly_by = None
-        
+        self.scoreboard = scoreboard
+        self.start_time = time.time()
+        self.answered_users = set()  # Tracks who already pressed a button this turn
+
         prefixes = ["A", "B", "C", "D"]
         for i, option in enumerate(options):
             if i >= 4: break
-            self.add_item(QuizButton(label=f"{prefixes[i]}. {option}", value=option, custom_id=f"q_{question_idx}_opt_{i}"))
+            self.add_item(MultiQuizButton(label=f"{prefixes[i]}. {option}", value=option))
 
     async def on_timeout(self):
         for item in self.children:
@@ -174,40 +177,49 @@ class QuizPlayView(discord.ui.View):
         self.stop()
 
 
-class QuizButton(discord.ui.Button):
-    def __init__(self, label, value, custom_id):
-        super().__init__(label=label, style=discord.ButtonStyle.secondary, custom_id=custom_id)
+class MultiQuizButton(discord.ui.Button):
+    def __init__(self, label, value):
+        super().__init__(label=label, style=discord.ButtonStyle.secondary)
         self.value = value
 
     async def callback(self, interaction: discord.Interaction):
-        view: QuizPlayView = self.view
-        
+        view: MultiQuizView = self.view
+        user = interaction.user
+        user_id = str(user.id)
+
+        # Check agar user pehle hi is question par click kar chuka hai
+        if user_id in view.answered_users:
+            await interaction.response.send_message("❌ Aap is question par apna attempt le chuke hain!", ephemeral=True)
+            return
+
+        view.answered_users.add(user_id)
+        time_taken = time.time() - view.start_time
+
         if self.value == view.correct_answer:
-            view.answered_correctly_by = interaction.user
-            self.style = discord.ButtonStyle.success
+            # Dynamic Speed Point Calculation: Max 100 points, har second delay par -5 points deduct honge
+            points_earned = max(20, int(100 - (time_taken * 5.33))) 
+
+            if user_id not in view.scoreboard:
+                view.scoreboard[user_id] = {"name": user.name, "points": 0}
             
-            for child in view.children:
-                child.disabled = True
-                
-            view.stop()
-            
+            view.scoreboard[user_id]["points"] += points_earned
+
+            # Give a small global rank progression boost in the background levels system too
             level_db = load_json_data(LEVELS_FILE)
-            u_id = str(interaction.user.id)
-            if u_id not in level_db:
-                level_db[u_id] = {"xp": 0, "level": 0}
-            level_db[u_id]["xp"] += 15
+            if user_id not in level_db:
+                level_db[user_id] = {"xp": 0, "level": 0}
+            level_db[user_id]["xp"] += 10
             save_json_data(level_db, LEVELS_FILE)
-            
-            await interaction.response.edit_message(view=view)
-            await interaction.followup.send(f"🎉 **SAHI JAWAAB!** {interaction.user.mention} ne sabse pehle correct option chuna! Aur unhe milte hain **+15 XP**! 🏆")
+
+            await interaction.response.send_message(f"✅ **Sahi Jawab!** Aapne **{time_taken:.2f}s** mein answer kiya aur paaye **+{points_earned} Points**! ⚡", ephemeral=True)
         else:
-            await interaction.response.send_message("❌ Galat jawaab! Dobara koshish karo ya kisi aur ko dimaag lagane do!", ephemeral=True)
+            await interaction.response.send_message("❌ **Galat Jawab!** Is question mein aapko 0 points mile.", ephemeral=True)
 
 
 # --- EVENTS & LOGGING LISTENERS ---
 @bot.event
 async def on_ready():
-    print(f'🤖 {bot.user.name} is ONLINE & MANUAL QUIZ ENGINE READY!')
+    print(f'🤖 {bot.user.name} is ONLINE & MULTIPLAYER SPEED QUIZ SYSTEM READY!')
     bot.add_view(ColorView())
     try:
         synced = await bot.tree.sync()
@@ -357,7 +369,7 @@ async def on_message(message):
     await bot.process_commands(message)
 
 
-# --- PURE MANUAL QUIZ ENGINE COMMANDS ---
+# --- MANUAL & MULTIPLAYER QUIZ COMMANDS ---
 
 @bot.tree.command(name="create-quiz", description="Initialize a new empty quiz group (Admin Only)")
 @app_commands.checks.has_permissions(manage_messages=True)
@@ -377,7 +389,7 @@ async def create_quiz(interaction: discord.Interaction, name: str):
     }
 
     save_json_data(quiz_db, QUIZ_FILE)
-    await interaction.response.send_message(f"✅ **Quiz Created Successfully!**\nGroup Name: `{name}`\nAb aap `/add-question` use karke isme manually sawaal daal sakte hain!")
+    await interaction.response.send_message(f"✅ **Quiz Created Successfully!**\nGroup Name: `{name}`\nAb aap `/add-question` use karke isme manually savaal daal sakte hain!")
 
 
 @bot.tree.command(name="add-question", description="Manually add a question, options, and correct answer (Admin Only)")
@@ -393,13 +405,11 @@ async def add_question(interaction: discord.Interaction, quiz_name: str, questio
     await interaction.response.defer(ephemeral=False)
 
     try:
-        # Options ko comma se split karenge aur extra spaces remove karenge
         parsed_options = [opt.strip() for opt in options.split(",")]
         correct_answer_clean = correct_answer.strip()
 
-        # Validation: Check karenge ki correct answer options me maujood hai ya nahi
         if correct_answer_clean not in parsed_options:
-            await interaction.followup.send(f"❌ **Error:** Aapka diya gaya correct answer (`{correct_answer_clean}`) options ki list se match nahi ho raha hai! Koshish karein ki spelling bilkul same ho.")
+            await interaction.followup.send(f"❌ **Error:** Aapka diya gaya correct answer (`{correct_answer_clean}`) options ki list se match nahi ho raha hai! Spelling check karein.")
             return
 
         if len(parsed_options) < 2:
@@ -437,7 +447,7 @@ async def add_question(interaction: discord.Interaction, quiz_name: str, questio
         await interaction.followup.send(f"❌ Question add karne mein dikkat aayi! Error: `{str(e)}`")
 
 
-@bot.tree.command(name="start-quiz", description="Launch and stream the full question stack of a quiz group live (Admin Only)")
+@bot.tree.command(name="start-quiz", description="Launch the Multiplayer Arena with live speed leaderboards (Admin Only)")
 @app_commands.checks.has_permissions(manage_messages=True)
 async def start_quiz(interaction: discord.Interaction, quiz_name: str):
     quiz_db = load_json_data(QUIZ_FILE)
@@ -447,42 +457,90 @@ async def start_quiz(interaction: discord.Interaction, quiz_name: str):
         await interaction.response.send_message(f"❌ Quiz `{quiz_name}` nahi mili ya usme koi questions nahi hain!", ephemeral=True)
         return
 
-    await interaction.response.send_message(f"🚀 **Starting Quiz:** `{quiz_db[quiz_key]['title']}`! Get ready server crew!", ephemeral=False)
+    await interaction.response.send_message(f"🚀 **MULTIPLAYER ARENA ACTIVE!**\nQuiz: `{quiz_db[quiz_key]['title']}`\n\n⚡ **Rules:** Har question ke liye sirf **15 Seconds** milenge. Jo jitna tez tap kareya, utne zyada points milenge! Ready ho jao crew!", ephemeral=False)
     channel = interaction.channel
 
     questions_list = quiz_db[quiz_key]["questions"]
     
+    # Session scoreboard dictionary to keep state over all questions
+    session_scoreboard = {}
+
     for idx, q_item in enumerate(questions_list, 1):
         q_text = q_item["question"]
         opts = q_item["options"]
         correct = q_item["correct"]
 
         embed = discord.Embed(
-            title=f"❓ Question {idx} of {len(questions_list)}",
-            description=f"**{q_text}**\n\n" + "\n".join([f"🔹 {o}" for o in opts]),
-            color=discord.Color.blue()
+            title=f"🔥 Question {idx} of {len(questions_list)}",
+            description=f"### {q_text}\n\n" + "\n".join([f"🔹 {o}" for o in opts]),
+            color=discord.Color.blurple()
         )
-        embed.set_footer(text="Aapke paas jawab dene ke liye 30 seconds hain! Faster responses win!")
+        embed.set_footer(text="Timer: 15 Seconds! Tap fast to extract max points!")
 
-        view = QuizPlayView(options=opts, correct_answer=correct, question_idx=idx)
+        view = MultiQuizView(options=opts, correct_answer=correct, scoreboard=session_scoreboard)
         msg = await channel.send(embed=embed, view=view)
 
+        # Wait exactly 15 seconds for the view timeout
         await view.wait()
 
-        if view.answered_correctly_by is None:
-            for child in view.children:
-                child.disabled = True
-            
-            timeout_embed = discord.Embed(
-                title=f"⏰ Time's Up for Question {idx}!",
-                description=f"**Question:** {q_text}\n\n❌ Kisi ne sahi jawaab nahi diya!\n✅ **Correct Answer:** `{correct}`",
-                color=discord.Color.red()
-            )
-            await msg.edit(embed=timeout_embed, view=view)
-        
-        await asyncio.sleep(4.0)
+        # Phase out old buttons layout after expiry
+        for child in view.children:
+            child.disabled = True
 
-    await channel.send(f"🏁 **QUIZ FINISHED!** `{quiz_db[quiz_key]['title']}` khatam ho chuki hai. Sabhi participants ko shabaashi! 🎉")
+        timeout_embed = discord.Embed(
+            title=f"⏰ Question {idx} Stopped!",
+            description=f"**Question:** {q_text}\n\n✅ **Correct Answer:** `{correct}`",
+            color=discord.Color.dark_grey()
+        )
+        await msg.edit(embed=timeout_embed, view=view)
+
+        # --- LIVE LEADERBOARD DISPLAY (After each question) ---
+        sorted_board = sorted(session_scoreboard.values(), key=lambda x: x["points"], reverse=True)
+        
+        board_text = ""
+        medals = ["🥇", "🥈", "🥉", "✨"]
+        for rank, p_data in enumerate(sorted_board[:10], 1):
+            icon = medals[rank-1] if rank <= 3 else medals[3]
+            board_text += f"{icon} **#{rank} {p_data['name']}** — `{p_data['points']} pts`\n"
+
+        if not board_text:
+            board_text = "*Kisi ne abhi tak koi points nahi score kiye!*"
+
+        board_embed = discord.Embed(
+            title=f"📊 Live Leaderboard (After Q{idx})",
+            description=board_text,
+            color=discord.Color.gold()
+        )
+        await channel.send(embed=board_embed)
+
+        # Short cool down gap between consecutive questions
+        await asyncio.sleep(5.0)
+
+    # --- FINAL STANDINGS GENERATION ---
+    final_sorted = sorted(session_scoreboard.values(), key=lambda x: x["points"], reverse=True)
+    
+    final_text = ""
+    for rank, p_data in enumerate(final_sorted, 1):
+        if rank == 1:
+            final_text += f"👑 **CHAMPION: {p_data['name']}** — `{p_data['points']} pts` 🏆\n"
+        elif rank == 2:
+            final_text += f"🥈 **Runner Up: {p_data['name']}** — `{p_data['points']} pts`\n"
+        elif rank == 3:
+            final_text += f"🥉 **Third Place: {p_data['name']}** — `{p_data['points']} pts`\n"
+        else:
+            final_text += f"🔹 **#{rank} {p_data['name']}** — `{p_data['points']} pts`\n"
+
+    if not final_text:
+        final_text = "⚠️ Lagta hai kisi ne bhi sahi jawab nahi diya pooray quiz mein!"
+
+    final_embed = discord.Embed(
+        title=f"🏁 FINAL STANDINGS: {quiz_db[quiz_key]['title']}",
+        description=final_text,
+        color=discord.Color.green()
+    )
+    final_embed.set_footer(text="Mubarak ho saare winners ko! Game Over.")
+    
+    await channel.send(embed=final_embed)
 
 
 # --- SNIPE COMMAND ---
