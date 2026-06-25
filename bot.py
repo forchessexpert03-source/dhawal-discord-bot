@@ -156,7 +156,7 @@ class WelcomeView(discord.ui.View):
             await interaction.channel.send(f"{interaction.user.mention} waved to {self.target_member.mention}! 👋👋👋")
 
 
-# --- NEW MULTIPLAYER QUIZ LOGIC WITH SPEED-BASED SCORING ---
+# --- MULTIPLAYER QUIZ LOGIC WITH SPEED-BASED SCORING ---
 class MultiQuizView(discord.ui.View):
     def __init__(self, options, correct_answer, scoreboard):
         super().__init__(timeout=15.0)  # Pure 15 seconds timer per question
@@ -196,7 +196,7 @@ class MultiQuizButton(discord.ui.Button):
         time_taken = time.time() - view.start_time
 
         if self.value == view.correct_answer:
-            # Dynamic Speed Point Calculation: Max 100 points, har second delay par -5 points deduct honge
+            # Dynamic Speed Point Calculation: Max 100 points, har second delay par points kam honge
             points_earned = max(20, int(100 - (time_taken * 5.33))) 
 
             if user_id not in view.scoreboard:
@@ -204,7 +204,7 @@ class MultiQuizButton(discord.ui.Button):
             
             view.scoreboard[user_id]["points"] += points_earned
 
-            # Give a small global rank progression boost in the background levels system too
+            # Give a small background levels system boost
             level_db = load_json_data(LEVELS_FILE)
             if user_id not in level_db:
                 level_db[user_id] = {"xp": 0, "level": 0}
@@ -447,6 +447,48 @@ async def add_question(interaction: discord.Interaction, quiz_name: str, questio
         await interaction.followup.send(f"❌ Question add karne mein dikkat aayi! Error: `{str(e)}`")
 
 
+@bot.tree.command(name="remove-question", description="Remove a specific question from a quiz using its number (Admin Only)")
+@app_commands.checks.has_permissions(manage_messages=True)
+async def remove_question(interaction: discord.Interaction, quiz_name: str, question_number: int):
+    quiz_db = load_json_data(QUIZ_FILE)
+    quiz_key = quiz_name.lower().replace(" ", "_")
+
+    if quiz_key not in quiz_db:
+        await interaction.response.send_message(f"❌ Quiz `{quiz_name}` nahi mili!", ephemeral=True)
+        return
+
+    questions_list = quiz_db[quiz_key]["questions"]
+    total_q = len(questions_list)
+
+    if total_q == 0:
+        await interaction.response.send_message(f"❌ `{quiz_name}` mein koi question bacha hi nahi hai!", ephemeral=True)
+        return
+
+    if question_number < 1 or question_number > total_q:
+        await interaction.response.send_message(f"❌ Invalid question number! Is quiz mein total `{total_q}` questions hain.", ephemeral=True)
+        return
+
+    await interaction.response.defer(ephemeral=False)
+
+    try:
+        removed_q = questions_list.pop(question_number - 1)
+        quiz_db[quiz_key]["questions"] = questions_list
+        save_json_data(quiz_db, QUIZ_FILE)
+
+        embed = discord.Embed(title="🗑️ Question Removed Successfully!", color=discord.Color.red())
+        embed.add_field(name="Quiz Group", value=quiz_db[quiz_key]["title"], inline=True)
+        embed.add_field(name="Removed Question #", value=str(question_number), inline=True)
+        embed.add_field(name="Remaining Questions", value=str(len(questions_list)), inline=True)
+        embed.add_field(name="💬 Removed Content", value=removed_q["question"], inline=False)
+        embed.set_footer(text="Database updated safely")
+
+        await interaction.followup.send(embed=embed)
+
+    except Exception as e:
+        print(f"Error removing question: {e}")
+        await interaction.followup.send(f"❌ Question remove karne mein error aaya: `{str(e)}`")
+
+
 @bot.tree.command(name="start-quiz", description="Launch the Multiplayer Arena with live speed leaderboards (Admin Only)")
 @app_commands.checks.has_permissions(manage_messages=True)
 async def start_quiz(interaction: discord.Interaction, quiz_name: str):
@@ -461,8 +503,6 @@ async def start_quiz(interaction: discord.Interaction, quiz_name: str):
     channel = interaction.channel
 
     questions_list = quiz_db[quiz_key]["questions"]
-    
-    # Session scoreboard dictionary to keep state over all questions
     session_scoreboard = {}
 
     for idx, q_item in enumerate(questions_list, 1):
@@ -480,10 +520,8 @@ async def start_quiz(interaction: discord.Interaction, quiz_name: str):
         view = MultiQuizView(options=opts, correct_answer=correct, scoreboard=session_scoreboard)
         msg = await channel.send(embed=embed, view=view)
 
-        # Wait exactly 15 seconds for the view timeout
         await view.wait()
 
-        # Phase out old buttons layout after expiry
         for child in view.children:
             child.disabled = True
 
@@ -494,7 +532,7 @@ async def start_quiz(interaction: discord.Interaction, quiz_name: str):
         )
         await msg.edit(embed=timeout_embed, view=view)
 
-        # --- LIVE LEADERBOARD DISPLAY (After each question) ---
+        # --- LIVE LEADERBOARD DISPLAY ---
         sorted_board = sorted(session_scoreboard.values(), key=lambda x: x["points"], reverse=True)
         
         board_text = ""
@@ -513,7 +551,6 @@ async def start_quiz(interaction: discord.Interaction, quiz_name: str):
         )
         await channel.send(embed=board_embed)
 
-        # Short cool down gap between consecutive questions
         await asyncio.sleep(5.0)
 
     # --- FINAL STANDINGS GENERATION ---
