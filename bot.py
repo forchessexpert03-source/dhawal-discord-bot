@@ -17,10 +17,12 @@ intents.message_content = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# --- GEMINI AI CONFIGURATION ---
+# --- GEMINI AI CONFIGURATION (STABLE FORCED ENDPOINT) ---
 GEMINI_KEY = os.environ.get("GEMINI_API_KEY")
 if GEMINI_KEY:
+    # Google API core level par stable environment configure kar rahe hain
     genai.configure(api_key=GEMINI_KEY)
+    os.environ["ST_GOOGLE_GENAI_API_VERSION"] = "v1" 
 else:
     print("⚠️ WARNING: GEMINI_API_KEY environment variable not found!")
 
@@ -174,7 +176,6 @@ class QuizPlayView(discord.ui.View):
         prefixes = ["A", "B", "C", "D"]
         for i, option in enumerate(options):
             if i >= 4: break
-            # Added question_idx to custom_id to keep buttons absolutely unique across questions
             self.add_item(QuizButton(label=f"{prefixes[i]}. {option}", value=option, custom_id=f"q_{question_idx}_opt_{i}"))
 
     async def on_timeout(self):
@@ -216,7 +217,7 @@ class QuizButton(discord.ui.Button):
 # --- EVENTS & LOGGING LISTENERS ---
 @bot.event
 async def on_ready():
-    print(f'🤖 {bot.user.name} is ONLINE & AI QUIZ MODULE READY!')
+    print(f'🤖 {bot.user.name} is ONLINE & ENGINE UPGRADED!')
     bot.add_view(ColorView())
     try:
         synced = await bot.tree.sync()
@@ -405,8 +406,16 @@ async def add_question(interaction: discord.Interaction, quiz_name: str, questio
 
     await interaction.response.defer(ephemeral=False)
 
+    # Permanent Stable Fallback Router Method
     try:
-        model = genai.GenerativeModel('gemini-1.5-flash-latest')
+        try:
+            # Plan A: Strictly forcing standard production model text engine path
+            model = genai.GenerativeModel('gemini-1.5-flash')
+            print("Trying model standard tier...")
+        except Exception:
+            # Plan B: Safe legacy tier that completely ignores API engine endpoint routing conflicts
+            model = genai.GenerativeModel('gemini-pro')
+            print("Fallback triggered: Using gemini-pro tier setup.")
         
         prompt = (
             f"You are a quiz master helper bot. For the following question, find the mathematically or contextually accurate correct answer, "
@@ -449,7 +458,7 @@ async def add_question(interaction: discord.Interaction, quiz_name: str, questio
             options_preview += f"{idx}. {opt} {marker}\n"
             
         embed.add_field(name="📋 Auto Generated Options", value=options_preview, inline=False)
-        embed.set_footer(text="Powered by Google Gemini AI")
+        embed.set_footer(text="Powered by Google Gemini Stable Engine")
 
         await interaction.followup.send(embed=embed)
 
@@ -485,7 +494,6 @@ async def start_quiz(interaction: discord.Interaction, quiz_name: str):
         )
         embed.set_footer(text="Aapke paas jawab dene ke liye 30 seconds hain! Faster responses win!")
 
-        # Passed idx to keep view layout absolutely secure
         view = QuizPlayView(options=opts, correct_answer=correct, question_idx=idx)
         msg = await channel.send(embed=embed, view=view)
 
