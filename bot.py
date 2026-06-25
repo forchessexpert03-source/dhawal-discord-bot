@@ -6,7 +6,8 @@ from flask import Flask
 import threading
 import datetime
 import json
-import pytz  # Strict Indian Standard Time conversion
+import pytz  
+import google.generativeai as genai
 
 # --- INITIAL SETUP & INTENTS ---
 intents = discord.Intents.default()
@@ -14,6 +15,13 @@ intents.members = True
 intents.message_content = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
+
+# --- GEMINI AI CONFIGURATION ---
+GEMINI_KEY = os.environ.get("GEMINI_API_KEY")
+if GEMINI_KEY:
+    genai.configure(api_key=GEMINI_KEY)
+else:
+    print("⚠️ WARNING: GEMINI_API_KEY environment variable not found!")
 
 # --- TIMEZONE HELPER (IST FORCE) ---
 def get_ist_time():
@@ -55,9 +63,10 @@ QUOTES = [
     "“The best way to predict your future is to create it.”"
 ]
 
-# --- DATABASES (LEVELS & SNIPE STORAGE) ---
+# --- DATABASES (LEVELS, SNIPE, & QUIZ STORAGE) ---
 LEVELS_FILE = "levels.json"
 SNIPE_FILE = "snipe_logs.json"
+QUIZ_FILE = "quizzes.json"
 
 def load_json_data(filename):
     if os.path.exists(filename):
@@ -156,7 +165,7 @@ class WelcomeView(discord.ui.View):
 # --- EVENTS & LOGGING LISTENERS ---
 @bot.event
 async def on_ready():
-    print(f'🤖 {bot.user.name} is ONLINE & TIMEZONE CORRECTED!')
+    print(f'🤖 {bot.user.name} is ONLINE & AI QUIZ MODULE READY!')
     bot.add_view(ColorView())
     try:
         synced = await bot.tree.sync()
@@ -214,7 +223,7 @@ async def on_member_join(member: discord.Member):
         await general_channel.send(f"Hey crew! {member.mention} has joined the server. Say hi or wave to them! 👋", view=view)
 
 
-# --- DETECT DELETED MESSAGES (SNIPE ENGINE WITH IST TIME) ---
+# --- DETECT DELETED MESSAGES (SNIPE ENGINE) ---
 @bot.event
 async def on_message_delete(message):
     if message.author.bot or not message.guild:
@@ -231,7 +240,6 @@ async def on_message_delete(message):
     if was_edited:
         edit_note = f"\n*(⚠️ Note: This message was edited before deletion. Original: \"{history_db[msg_id]['before']}\")*"
 
-    # Fixed to explicit IST
     snipe_data[channel_id] = {
         "content": message.content if message.content else "[No text or attachment contained]",
         "author": message.author.name,
@@ -241,7 +249,7 @@ async def on_message_delete(message):
     }
 
 
-# --- DETECT EDITED MESSAGES (EDIT GHOST LOGGER WITH SERVER ID & IST TIME) ---
+# --- DETECT EDITED MESSAGES (EDIT GHOST LOGGER) ---
 @bot.event
 async def on_message_edit(before, after):
     if before.author.bot or before.content == after.content or not before.guild:
@@ -255,7 +263,7 @@ async def on_message_edit(before, after):
         "author": before.author.name,
         "before": before.content,
         "after": after.content,
-        "timestamp": get_ist_time().strftime("%Y-%m-%d %I:%M:%S %p")  # Fixed to explicit IST
+        "timestamp": get_ist_time().strftime("%Y-%m-%d %I:%M:%S %p")
     }
     
     if len(history_db) > 100:
@@ -305,6 +313,105 @@ async def on_message(message):
 
     save_json_data(level_db, LEVELS_FILE)
     await bot.process_commands(message)
+
+
+# --- AI QUIZ ENGINE COMMANDS ---
+
+@bot.tree.command(name="create-quiz", description="Initialize a new empty quiz group (Admin Only)")
+@app_commands.checks.has_permissions(manage_messages=True)
+async def create_quiz(interaction: discord.Interaction, name: str):
+    quiz_db = load_json_data(QUIZ_FILE)
+    quiz_key = name.lower().replace(" ", "_")
+
+    if quiz_key in quiz_db:
+        await interaction.response.send_message(f"❌ **'{name}'** naam se quiz pehle se hi exist karti hai!", ephemeral=True)
+        return
+
+    # Structure initialization
+    quiz_db[quiz_key] = {
+        "title": name,
+        "creator": interaction.user.name,
+        "created_at": get_ist_time().strftime("%Y-%m-%d %I:%M %p"),
+        "questions": []
+    }
+
+    save_json_data(quiz_db, QUIZ_FILE)
+    await interaction.response.send_message(f"✅ **Quiz Created Successfully!**\nGroup Name: `{name}`\nAb aap `/add-question` use karke isme AI-powered sawaal daal sakte hain!")
+
+
+@bot.tree.command(name="add-question", description="Submit a raw question statement; AI will auto-generate 4 accurate options (Admin Only)")
+@app_commands.checks.has_permissions(manage_messages=True)
+async def add_question(interaction: discord.Interaction, quiz_name: str, question: str):
+    quiz_db = load_json_data(QUIZ_FILE)
+    quiz_key = quiz_name.lower().replace(" ", "_")
+
+    if quiz_key not in quiz_db:
+        await interaction.response.send_message(f"❌ Quiz `{quiz_name}` nahi mili! Pehle `/create-quiz` chalao.", ephemeral=True)
+        return
+
+    if not GEMINI_KEY:
+        await interaction.response.send_message("❌ Error: Bot ke andar Gemini API Key configured nahi hai!", ephemeral=True)
+        return
+
+    # Defer response because AI takes time to think and generate options
+    await interaction.response.defer(ephemeral=False)
+
+    try:
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        
+        # Super strict system prompt to get clean JSON from Gemini
+        prompt = (
+            f"You are a quiz master helper bot. For the following question, find the mathematically or contextually accurate correct answer, "
+            f"and then generate 3 additional highly relevant but incorrect multiple-choice options. "
+            f"Your output must be strictly in raw valid JSON format without markdown ticks, like this:\n"
+            f'{{"correct": "Correct Answer Value", "options": ["Option 1", "Option 2", "Option 3", "Option 4"]}}\n'
+            f"Note that the correct answer MUST be one of the items inside the 4 items of the options array list! "
+            f"Mix the correct answer position randomly inside the array. Here is the question: {question}"
+        )
+
+        response = model.generate_content(prompt)
+        raw_text = response.text.strip()
+        
+        # Clean potential markdown block wrappers if AI sends them anyway
+        if raw_text.startswith("```json"):
+            raw_text = raw_text.replace("```json", "").replace("```", "").strip()
+        elif raw_text.startswith("```"):
+            raw_text = raw_text.replace("```", "").strip()
+
+        # Parse JSON from AI
+        ai_data = json.loads(raw_text)
+        
+        parsed_question_entry = {
+            "question": question,
+            "options": ai_data["options"],
+            "correct": ai_data["correct"]
+        }
+
+        # Append to database block
+        quiz_db[quiz_key]["questions"].append(parsed_question_entry)
+        save_json_data(quiz_db, QUIZ_FILE)
+
+        # Build preview embed for approval
+        embed = discord.Embed(title=f"🧠 AI Question Processed & Added!", color=discord.Color.purple())
+        embed.add_field(name="Quiz Group", value=quiz_db[quiz_key]["title"], inline=True)
+        embed.add_field(name="Total Questions Now", value=str(len(quiz_db[quiz_key]["questions"])), inline=True)
+        embed.add_field(name="💬 Question Statement", value=question, inline=False)
+        
+        options_preview = ""
+        for idx, opt in enumerate(ai_data["options"], 1):
+            marker = "🔹"
+            if opt == ai_data["correct"]:
+                marker = "✅ (Correct)"
+            options_preview += f"{idx}. {opt} {marker}\n"
+            
+        embed.add_field(name="📋 Auto Generated Options", value=options_preview, inline=False)
+        embed.set_footer(text="Powered by Google Gemini AI")
+
+        await interaction.followup.send(embed=embed)
+
+    except Exception as e:
+        print(f"Quiz AI Generation failed: {e}")
+        await interaction.followup.send(f"❌ AI options generation process fail ho gaya! Error: `{str(e)}`")
 
 
 # --- SNIPE COMMAND ---
