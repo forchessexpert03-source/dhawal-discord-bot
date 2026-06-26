@@ -20,7 +20,6 @@ intents.presences = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-KUCH_BHI_SERVER_ID = 123456789012345678  
 WELCOME_CHANNEL_ID = 876543210987654321  
 
 # Exact 32 custom colors registry matrix mapped properly split into 2 drops
@@ -95,10 +94,7 @@ class ColorSelectMenu(discord.ui.Select):
         super().__init__(placeholder=placeholder, min_values=1, max_values=1, options=options, custom_id=custom_id)
 
     async def callback(self, interaction: discord.Interaction):
-        if interaction.guild_id != KUCH_BHI_SERVER_ID:
-            await interaction.response.send_message("❌ This UI feature is restricted to 'Kuch Bhi' server deployment rules.", ephemeral=True)
-            return
-
+        # GENERALIZED: Kuch bhi server restriction bypass removed here to prevent silent response failures
         await interaction.response.defer(ephemeral=True)
         guild = interaction.guild
         member = interaction.user
@@ -129,8 +125,8 @@ class ColorSelectMenu(discord.ui.Select):
 class ColorView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
-        self.add_item(ColorSelectMenu("Pick Color (Part 1: 1-20)...", COLOR_ROLES_1, "kuchbhi:color_select_1"))
-        self.add_item(ColorSelectMenu("Pick Color (Part 2: 21-32)...", COLOR_ROLES_2, "kuchbhi:color_select_2"))
+        self.add_item(ColorSelectMenu("Pick Color (Part 1: 1-20)...", COLOR_ROLES_1, "general:color_select_1"))
+        self.add_item(ColorSelectMenu("Pick Color (Part 2: 21-32)...", COLOR_ROLES_2, "general:color_select_2"))
 
 # ==============================================================================
 # 4. GAMING INTERFACE & TIMED MULTIPLAYER ENGINE COMPONENTS
@@ -224,31 +220,8 @@ async def on_ready():
 @bot.event
 async def on_member_join(member: discord.Member):
     guild = member.guild
-    if guild.id == KUCH_BHI_SERVER_ID:
-        channel = bot.get_channel(WELCOME_CHANNEL_ID)
-        if channel:
-            embed = discord.Embed(
-                title="👋 Welcome to Kuch Bhi!",
-                description=f"Arey waah, {member.mention} server mein aa chuke hain! 🎉\n\nApna pasandida rang lene ke liye niche diye gaye panel se color select karein!",
-                color=discord.Color.random()
-            )
-            embed.set_thumbnail(url=member.display_avatar.url)
-            await channel.send(content=member.mention, embed=embed)
-        return
-
-    roles_to_add = []
-    lil_dawg_role = discord.utils.get(guild.roles, name="Lil Dawg")
-    newbies_role = discord.utils.get(guild.roles, name="Newbies")
     
-    if lil_dawg_role: roles_to_add.append(lil_dawg_role)
-    if newbies_role: roles_to_add.append(newbies_role)
-        
-    if roles_to_add:
-        try:
-            await member.add_roles(*roles_to_add)
-        except discord.Forbidden:
-            print("Join handler permissions hierarchy evaluation exception thrown.")
-
+    # Optional logic fallback for generic routing
     welcome_channel = get_flexible_channel(guild, "welcome")
     if welcome_channel:
         total_members = len(guild.members)
@@ -270,6 +243,20 @@ async def on_member_join(member: discord.Member):
         embed.set_thumbnail(url=member.display_avatar.url)
         embed.set_footer(text=f"Member #{total_members}")
         await welcome_channel.send(content=member.mention, embed=embed)
+        return
+
+    roles_to_add = []
+    lil_dawg_role = discord.utils.get(guild.roles, name="Lil Dawg")
+    newbies_role = discord.utils.get(guild.roles, name="Newbies")
+    
+    if lil_dawg_role: roles_to_add.append(lil_dawg_role)
+    if newbies_role: roles_to_add.append(newbies_role)
+        
+    if roles_to_add:
+        try:
+            await member.add_roles(*roles_to_add)
+        except discord.Forbidden:
+            print("Join handler permissions hierarchy evaluation exception thrown.")
 
 @bot.event
 async def on_message_delete(message):
@@ -313,16 +300,12 @@ async def on_message_edit(before, after):
 # ==============================================================================
 # 7. SLASH COMMAND CORE SET: UTILITY, CUSTOM PANELS & LOG WRAPPERS
 # ==============================================================================
-@bot.tree.command(name="setup-colors", description="Kuch Bhi server ke liye custom color menu setup karne ka official panel.")
+@bot.tree.command(name="setup-colors", description="Custom color display menu dropdown setup engine panel.")
 @app_commands.checks.has_permissions(administrator=True)
 async def setup_colors(interaction: discord.Interaction):
-    if interaction.guild_id != KUCH_BHI_SERVER_ID:
-        await interaction.response.send_message("❌ This command routine is explicitly restricted to specific backend server grids.", ephemeral=True)
-        return
-        
-    # FIXED: Direct implementation mapping instead of channel dispatch chain to prevent response failures.
+    # GENERALIZED: Allowed globally on any deployment nodes smoothly
     embed = discord.Embed(
-        title="🌈 Kuch Bhi - Custom Color Picker Panel",
+        title="🌈 Custom Color Picker Panel",
         description="Select your desired identity color role setup using the multi-dropdown matrix arrays below.\n\nChoose any tone to map it instantly!",
         color=discord.Color.blurple()
     )
@@ -347,7 +330,6 @@ async def editlogs(interaction: discord.Interaction, member: discord.Member):
     target_user_id = str(member.id)
     
     found_log = None
-    # Scan latest entries backward to extract structural traces
     for msg_id in reversed(list(history_db.keys())):
         log = history_db[msg_id]
         if log.get("guild_id") == guild_id and log.get("author_id") == target_user_id:
