@@ -603,7 +603,10 @@ async def start_quiz(interaction: discord.Interaction, quiz_name: str):
 
     for idx, q_item in enumerate(q_list, 1):
         embed = discord.Embed(title=f"❓ Phase {idx} of {len(q_list)}", description=f"**{q_item['question']}**", color=discord.Color.blue())
-        view = MultiQuizView(options=q_item["options"], correct_answer=item_target := q_item["correct"], scoreboard=session_scoreboard)
+        
+        # FIXED: Removed inline walrus operator assignment to prevent deployment syntax engine crashes
+        item_target = q_item["correct"]
+        view = MultiQuizView(options=q_item["options"], correct_answer=item_target, scoreboard=session_scoreboard)
         quiz_msg = await channel.send(embed=embed, view=view)
         
         await asyncio.sleep(15.0)
