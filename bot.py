@@ -11,21 +11,19 @@ import asyncio
 import time
 
 # ==============================================================================
-# 1. BOT INTENTS, INITIALIZATION & CORE BRANDING
+# 1. CORE CONFIGURATION & INTENTS SECURITY
 # ==============================================================================
 intents = discord.Intents.default()
 intents.members = True  
 intents.message_content = True
+intents.presences = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# ==============================================================================
-# 2. SERVER SPECIFIC HARDCODED CONFIGURATION VALUES
-# ==============================================================================
-KUCH_BHI_SERVER_ID = 123456789012345678  # 👈 Apna actual "Kuch Bhi" server ID yahan daalna
-WELCOME_CHANNEL_ID = 876543210987654321  # 👈 Apna actual welcome channel ID yahan daalna
+KUCH_BHI_SERVER_ID = 123456789012345678  
+WELCOME_CHANNEL_ID = 876543210987654321  
 
-# Image image_b96521.png ke 32 exact custom colors mapping (Split due to Discord UI limits)
+# Exact 32 custom colors registry matrix mapped properly split into 2 drops
 COLOR_ROLES_1 = {
     "Crimson": "Crimson", "Hot pink": "Hot pink", "Magenta": "Magenta",
     "Yellow": "Yellow", "Chocolate": "Chocolate", "Aqua": "Aqua",
@@ -48,19 +46,21 @@ COLOR_ROLES_2 = {
 ALL_COLOR_NAMES = list(COLOR_ROLES_1.values()) + list(COLOR_ROLES_2.values())
 
 # ==============================================================================
-# 3. HELPER FUNCTIONS, DATABASES AND TIMEZONE SYSTEM
+# 2. DATABASE ROUTINES, STATE STORAGE & IST TIME PRESETS
 # ==============================================================================
+SNIPE_FILE = "snipe_logs.json"
+QUIZ_FILE = "quizzes.json"
+WARN_FILE = "warns.json"
+CONFIG_FILE = "server_configs.json"
+
 def get_ist_time():
     ist = pytz.timezone('Asia/Kolkata')
     return datetime.datetime.now(ist)
 
-SNIPE_FILE = "snipe_logs.json"
-QUIZ_FILE = "quizzes.json"
-
 def load_json_data(filename):
     if os.path.exists(filename):
         try:
-            with open(filename, "r") as f:
+            with open(filename, "r", encoding="utf-8") as f:
                 return json.load(f)
         except Exception:
             return {}
@@ -68,12 +68,11 @@ def load_json_data(filename):
 
 def save_json_data(data, filename):
     try:
-        with open(filename, "w") as f:
-            json.dump(data, f, indent=4)
+        with open(filename, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=4, ensure_ascii=False)
     except Exception as e:
-        print(f"Error saving database JSON structure: {e}")
+        print(f"Database write error on storage cluster: {e}")
 
-# High-speed operational cache for sniping module
 snipe_data = {}
 
 def get_flexible_channel(guild, keywords):
@@ -85,7 +84,7 @@ def get_flexible_channel(guild, keywords):
     return None
 
 # ==============================================================================
-# 4. DISCORD INTERACTION UI COMPONENTS (COLOR MENU & DROPDOWNS)
+# 3. INTERACTIVE UI ELEMENTS & OVERLAPPING ROLES PROTECTION
 # ==============================================================================
 class ColorSelectMenu(discord.ui.Select):
     def __init__(self, placeholder, options_dict, custom_id):
@@ -97,7 +96,7 @@ class ColorSelectMenu(discord.ui.Select):
 
     async def callback(self, interaction: discord.Interaction):
         if interaction.guild_id != KUCH_BHI_SERVER_ID:
-            await interaction.response.send_message("❌ This UI view element is locked to 'Kuch Bhi' server rules.", ephemeral=True)
+            await interaction.response.send_message("❌ This UI feature is restricted to 'Kuch Bhi' server deployment rules.", ephemeral=True)
             return
 
         await interaction.response.defer(ephemeral=True)
@@ -105,13 +104,12 @@ class ColorSelectMenu(discord.ui.Select):
         member = interaction.user
         selected_color = self.values[0]
 
-        # Purane active profile colors wipeout mechanism
         roles_to_remove = [role for role in member.roles if role.name in ALL_COLOR_NAMES and role.name != selected_color]
         if roles_to_remove:
             try:
                 await member.remove_roles(*roles_to_remove)
             except discord.Forbidden:
-                await interaction.followup.send("❌ Error removing old role. Check bot hierarchy permissions setup.", ephemeral=True)
+                await interaction.followup.send("❌ Discord Hierarchy limits: Put Bot's role above all color roles!", ephemeral=True)
                 return
 
         target_role = discord.utils.get(guild.roles, name=selected_color)
@@ -119,32 +117,32 @@ class ColorSelectMenu(discord.ui.Select):
             try:
                 if target_role in member.roles:
                     await member.remove_roles(target_role)
-                    await interaction.followup.send(f"🎨 Removed your **{selected_color}** color role styling.", ephemeral=True)
+                    await interaction.followup.send(f"🎨 Removed your **{selected_color}** color configuration.", ephemeral=True)
                 else:
                     await member.add_roles(target_role)
-                    await interaction.followup.send(f"🎨 Success! Your color role has been updated to **{selected_color}**.", ephemeral=True)
+                    await interaction.followup.send(f"🎨 Success! Activated custom color shade **{selected_color}**.", ephemeral=True)
             except discord.Forbidden:
-                await interaction.followup.send("❌ Cannot assign role. Ensure bot role is physically above color roles in server settings!", ephemeral=True)
+                await interaction.followup.send("❌ Role addition failed. Verify internal permission flags.", ephemeral=True)
         else:
-            await interaction.followup.send(f"❌ Role '{selected_color}' server settings mein nahi mila.", ephemeral=True)
+            await interaction.followup.send(f"❌ Error: Visual role '{selected_color}' missing from Server configuration maps.", ephemeral=True)
 
 class ColorView(discord.ui.View):
     def __init__(self):
-        super().__init__(timeout=None)  # Persistent across restarts
+        super().__init__(timeout=None)
         self.add_item(ColorSelectMenu("Pick Color (Part 1: 1-20)...", COLOR_ROLES_1, "kuchbhi:color_select_1"))
         self.add_item(ColorSelectMenu("Pick Color (Part 2: 21-32)...", COLOR_ROLES_2, "kuchbhi:color_select_2"))
 
 # ==============================================================================
-# 5. MULTIPLAYER QUIZ ENGINE COMPONENTS & UI
+# 4. GAMING INTERFACE & TIMED MULTIPLAYER ENGINE COMPONENTS
 # ==============================================================================
 class MultiQuizView(discord.ui.View):
     def __init__(self, options, correct_answer, scoreboard):
-        super().__init__(timeout=15.0)  
+        super().__init__(timeout=15.0)
         self.options = options
         self.correct_answer = correct_answer
         self.scoreboard = scoreboard
         self.start_time = time.time()
-        self.answered_users = set()  
+        self.answered_users = set()
 
         prefixes = ["A", "B", "C", "D"]
         for i, option in enumerate(options):
@@ -167,25 +165,23 @@ class MultiQuizButton(discord.ui.Button):
         user_id = str(user.id)
 
         if user_id in view.answered_users:
-            await interaction.response.send_message("❌ Aap is question par apna attempt le chuke hain!", ephemeral=True)
+            await interaction.response.send_message("❌ View Attempt Lock: You can only input one answer per instance!", ephemeral=True)
             return
 
         view.answered_users.add(user_id)
         time_taken = time.time() - view.start_time
 
         if self.value == view.correct_answer:
-            points_earned = max(20, int(100 - (time_taken * 5.33))) 
-
+            points_earned = max(20, int(100 - (time_taken * 5.33)))
             if user_id not in view.scoreboard:
                 view.scoreboard[user_id] = {"name": user.name, "points": 0}
-            
             view.scoreboard[user_id]["points"] += points_earned
-            await interaction.response.send_message(f"✅ **Sahi Jawab!** Aapne **{time_taken:.2f}s** mein answer kiya aur paaye **+{points_earned} Points**! ⚡", ephemeral=True)
+            await interaction.response.send_message(f"✅ **Correct!** Speed matrix multiplier applied. Received **+{points_earned} Points**! ⚡", ephemeral=True)
         else:
-            await interaction.response.send_message("❌ **Galat Jawab!** Is question mein aapko 0 points mile.", ephemeral=True)
+            await interaction.response.send_message("❌ **Wrong Choice!** 0 points recorded for this frame.", ephemeral=True)
 
 # ==============================================================================
-# 6. MOTIVATIONAL QUOTES ARCHIVE STRUCTURE
+# 5. DICTIONARIES, STRING CONSTANTS & QUOTE CACHE
 # ==============================================================================
 QUOTES = [
     "“An early-morning walk is a blessing for the whole day.”",
@@ -211,7 +207,7 @@ QUOTES = [
 ]
 
 # ==============================================================================
-# 7. DISCORD BACKEND LOOPS & MOTIVATIONAL TASKS
+# 6. TIME LOOPS & AUTO RECURRENT SYSTEM TASKS
 # ==============================================================================
 @tasks.loop(hours=2.0)
 async def bump_reminder_loop():
@@ -223,28 +219,23 @@ async def bump_reminder_loop():
             mention_text = staff_role.mention if staff_role else "@here"
             
             embed = discord.Embed(
-                title="⏰ SERVER BUMP TIME! ⏰",
-                description=(
-                    f"Hey {mention_text}! **2 ghante poore ho chuke hain.**\n\n"
-                    "Server ki growth ke liye please Disboard ya custom bumper use karke server ko bump karein!\n"
-                    "👉 `/bump` type karke boom karein!"
-                ),
+                title="⏰ SERVER BUMP TIMEOUT CYCLE ⏰",
+                description=f"Hey {mention_text}! **2 hours have elapsed.**\n\nUse your listings commands to sync visibility rankings!",
                 color=discord.Color.gold()
             )
-            embed.set_footer(text="Automated Growth Management System")
+            embed.set_footer(text="Automated Server Bump Dispatcher")
             try:
                 await bump_channel.send(content=mention_text, embed=embed)
             except Exception as e:
-                print(f"Error sending bump reminder to guild {guild.name}: {e}")
+                print(f"Task loop failed targeting channel assets: {e}")
 
 # ==============================================================================
-# 8. SYSTEM BROADCAST LISTENERS & AUTOMATION EVENTS
+# 7. EVENT DECORATORS & LOW LEVEL AUTOMATION INTERCEPTORS
 # ==============================================================================
 @bot.event
 async def on_ready():
-    print(f'🤖 {bot.user.name} is ONLINE & CUSTOM PRODUCTION READY!')
-    bot.add_view(ColorView()) 
-    
+    print(f'🤖 {bot.user.name} Master Routing Cluster Bootstrapped successfully!')
+    bot.add_view(ColorView())
     await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name="Abhi9av 👑"))
     
     if not bump_reminder_loop.is_running():
@@ -252,14 +243,13 @@ async def on_ready():
         
     try:
         synced = await bot.tree.sync()
-        print(f"Synced {len(synced)} slash commands globally.")
+        print(f"Synced {len(synced)} slash commands into the system cache mapping.")
     except Exception as e:
-        print(f"Error syncing globally on boot setup: {e}")
+        print(f"Global layout initialization tree mismatch error: {e}")
 
 @bot.event
 async def on_member_join(member: discord.Member):
     guild = member.guild
-    
     if guild.id == KUCH_BHI_SERVER_ID:
         channel = bot.get_channel(WELCOME_CHANNEL_ID)
         if channel:
@@ -283,7 +273,7 @@ async def on_member_join(member: discord.Member):
         try:
             await member.add_roles(*roles_to_add)
         except discord.Forbidden:
-            print("❌ Permission Error: Bot role position invalid on hierarchy grid.")
+            print("Join handler permissions hierarchy evaluation exception thrown.")
 
     welcome_channel = get_flexible_channel(guild, "welcome")
     if welcome_channel:
@@ -296,11 +286,9 @@ async def on_member_join(member: discord.Member):
             description=f"We are glad to have you here with us!\n\n✨ *{selected_quote}*",
             color=discord.Color.from_rgb(114, 137, 218)
         )
-        
         color_channel = get_flexible_channel(guild, ["color", "colours"])
         if color_channel:
             embed.add_field(name="🎨 Get Roles", value=f"Head over to {color_channel.mention} to grab your custom colors!", inline=False)
-            
         rules_channel = get_flexible_channel(guild, "rules")
         if rules_channel:
             embed.add_field(name="📜 Server Rules", value=f"Make sure to check out {rules_channel.mention} to keep the community clean.", inline=False)
@@ -311,9 +299,7 @@ async def on_member_join(member: discord.Member):
 
 @bot.event
 async def on_message_delete(message):
-    if message.author.bot or not message.guild:
-        return
-        
+    if message.author.bot or not message.guild: return
     channel_id = str(message.channel.id)
     guild_id = str(message.guild.id)
     
@@ -323,10 +309,10 @@ async def on_message_delete(message):
     
     edit_note = ""
     if was_edited:
-        edit_note = f"\n*(⚠️ Note: This message was edited before deletion. Original: \"{history_db[msg_id]['before']}\")*"
+        edit_note = f"\n*(⚠️ Note: Message was updated prior to deletion. State captured: \"{history_db[msg_id]['before']}\")*"
 
     snipe_data[channel_id] = {
-        "content": message.content if message.content else "[No text or attachment contained]",
+        "content": message.content if message.content else "[Empty Layer or File Stream Embedded]",
         "author": message.author.name,
         "avatar": message.author.display_avatar.url,
         "timestamp": get_ist_time().strftime("%I:%M:%S %p"),
@@ -335,9 +321,7 @@ async def on_message_delete(message):
 
 @bot.event
 async def on_message_edit(before, after):
-    if before.author.bot or before.content == after.content or not before.guild:
-        return
-
+    if before.author.bot or before.content == after.content or not before.guild: return
     guild_id = str(before.guild.id)
     history_db = load_json_data(SNIPE_FILE)
     history_db[str(before.id)] = {
@@ -347,58 +331,203 @@ async def on_message_edit(before, after):
         "after": after.content,
         "timestamp": get_ist_time().strftime("%Y-%m-%d %I:%M:%S %p")
     }
-    
     if len(history_db) > 100:
-        first_key = list(history_db.keys())[0]
-        history_db.pop(first_key)
-        
+        history_db.pop(list(history_db.keys())[0])
     save_json_data(history_db, SNIPE_FILE)
 
 # ==============================================================================
-# 9. UTILITY SLASH COMMANDS (BUMP & MANAGEMENT PANELS)
+# 8. SLASH COMMAND CORE SET: UTILITY & CUSTOM DEPLOYMENT PANELS
 # ==============================================================================
 @bot.tree.command(name="bump", description="Bump the server to boost rankings and visibility!")
 async def bump(interaction: discord.Interaction):
     embed = discord.Embed(
         title="🚀 SERVER BUMPED SUCCESSFULLY!",
-        description=(
-            f"Thank you {interaction.user.mention}! **{interaction.guild.name}** has been successfully bumped!\n\n"
-            "📈 Visibility increased on listing boards. Agla auto-reminder **2 ghante** mein staff ko mil jayega."
-        ),
+        description=f"Thank you {interaction.user.mention}! **{interaction.guild.name}** listings updated!\nNext automatic tracker alerts dispatched in 2 hours.",
         color=discord.Color.green()
     )
     embed.set_thumbnail(url=interaction.guild.icon.url if interaction.guild.icon else None)
-    embed.set_footer(text=f"Bumped by {interaction.user.name}")
     await interaction.response.send_message(embed=embed)
 
 @bot.tree.command(name="setup-colors", description="Kuch Bhi server ke liye custom color menu setup karein. (Admin Only)")
 @app_commands.checks.has_permissions(administrator=True)
 async def setup_colors(interaction: discord.Interaction):
     if interaction.guild_id != KUCH_BHI_SERVER_ID:
-        await interaction.response.send_message("❌ Yeh command sirf 'Kuch Bhi' server mein valid hai.", ephemeral=True)
+        await interaction.response.send_message("❌ This command routine is explicitly restricted to specific backend server grids.", ephemeral=True)
         return
-
     embed = discord.Embed(
-        title="🌈 Kuch Bhi - Custom Color Picker",
-        description="Niche diye gaye menus se apna manpasand custom color chunain! Ek baar mein ek hi color active rahega.",
+        title="🌈 Kuch Bhi - Custom Color Picker Panel",
+        description="Select your desired identity color role setup using the multi-dropdown matrix arrays below.",
         color=discord.Color.blurple()
     )
-    await interaction.response.send_message("Panel send kiya jaa raha hai...", ephemeral=True)
+    await interaction.response.send_message("Rendering layout structures...", ephemeral=True)
     await interaction.channel.send(embed=embed, view=ColorView())
 
+@bot.tree.command(name="snipe", description="Retrieve the last deleted message string from the runtime cache wrapper.")
+async def snipe(interaction: discord.Interaction):
+    channel_id = str(interaction.channel.id)
+    if channel_id not in snipe_data:
+        await interaction.response.send_message("❌ There are no recent text string deletions found in this tracking loop scope.", ephemeral=True)
+        return
+    data = snipe_data[channel_id]
+    embed = discord.Embed(description=f"{data['content']}{data['extra_info']}", color=discord.Color.red())
+    embed.set_author(name=f"Deleted by: {data['author']}", icon_url=data['avatar'])
+    embed.set_footer(text=f"Time: {data['timestamp']} (IST Zone Forced)")
+    await interaction.response.send_message(embed=embed)
+
 # ==============================================================================
-# 10. QUIZ DATA CREATION & MANAGEMENT INTERFACE
+# 9. SLASH COMMAND CORE SET: MODERATION & USER PROTECTION COMMANDS
+# ==============================================================================
+@bot.tree.command(name="warn", description="Issue a formal backend system warning to a server member.")
+@app_commands.checks.has_permissions(manage_messages=True)
+async def warn(interaction: discord.Interaction, member: discord.Member, reason: str):
+    warns_db = load_json_data(WARN_FILE)
+    m_id = str(member.id)
+    g_id = str(interaction.guild.id)
+    
+    if g_id not in warns_db: warns_db[g_id] = {}
+    if m_id not in warns_db[g_id]: warns_db[g_id][m_id] = []
+    
+    warn_payload = {
+        "warn_id": len(warns_db[g_id][m_id]) + 1,
+        "moderator": interaction.user.name,
+        "reason": reason,
+        "timestamp": get_ist_time().strftime("%Y-%m-%d %I:%M %p")
+    }
+    warns_db[g_id][m_id].append(warn_payload)
+    save_json_data(warns_db, WARN_FILE)
+    
+    embed = discord.Embed(title="⚠️ Member Warning Registered", color=discord.Color.orange())
+    embed.add_field(name="User Info", value=member.mention, inline=True)
+    embed.add_field(name="Total Violations", value=str(len(warns_db[g_id][m_id])), inline=True)
+    embed.add_field(name="Reason Specification", value=reason, inline=False)
+    await interaction.response.send_message(embed=embed)
+
+@bot.tree.command(name="warns", description="View warning historical data sheets for an active entity profile.")
+async def views_warns(interaction: discord.Interaction, member: discord.Member):
+    warns_db = load_json_data(WARN_FILE)
+    m_id = str(member.id)
+    g_id = str(interaction.guild.id)
+    
+    if g_id not in warns_db or m_id not in warns_db[g_id] or not warns_db[g_id][m_id]:
+        await interaction.response.send_message(f"✅ Clean Slate: {member.name} contains zero moderation flags on this registry.", ephemeral=True)
+        return
+        
+    embed = discord.Embed(title=f"📋 Enforcement Violation Log: {member.name}", color=discord.Color.yellow())
+    for item in warns_db[g_id][m_id]:
+        embed.add_field(
+            name=f"Case ID: #{item['warn_id']} | Date: {item['timestamp']}",
+            value=f"**Reason:** {item['reason']}\n**Issued By:** {item['moderator']}",
+            inline=False
+        )
+    await interaction.response.send_message(embed=embed)
+
+@bot.tree.command(name="clear-warns", description="Purge administrative infraction registries completely.")
+@app_commands.checks.has_permissions(administrator=True)
+async def clear_warns(interaction: discord.Interaction, member: discord.Member):
+    warns_db = load_json_data(WARN_FILE)
+    m_id = str(member.id)
+    g_id = str(interaction.guild.id)
+    
+    if g_id in warns_db and m_id in warns_db[g_id]:
+        warns_db[g_id].pop(m_id)
+        save_json_data(warns_db, WARN_FILE)
+    await interaction.response.send_message(f"🗑️ System cleanup: Warnings ledger cleared for {member.mention}.")
+
+@bot.tree.command(name="mute", description="Timeout an operational profile user across chat bands.")
+@app_commands.checks.has_permissions(moderate_members=True)
+async def mute(interaction: discord.Interaction, member: discord.Member, minutes: int, reason: str = "Unspecified"):
+    duration = datetime.timedelta(minutes=minutes)
+    try:
+        await member.timeout(duration, reason=reason)
+        embed = discord.Embed(title="🤫 Member Isolated (Timeout Applied)", color=discord.Color.dark_gray())
+        embed.add_field(name="Target User", value=member.mention, inline=True)
+        embed.add_field(name="Duration", value=f"{minutes} Minutes", inline=True)
+        embed.add_field(name="Reasoning context", value=reason, inline=False)
+        await interaction.response.send_message(embed=embed)
+    except Exception as e:
+        await interaction.response.send_message(f"❌ Operation execution halted: `{str(e)}`", ephemeral=True)
+
+@bot.tree.command(name="unmute", description="Revoke communication isolation timeout rules early.")
+@app_commands.checks.has_permissions(moderate_members=True)
+async def unmute(interaction: discord.Interaction, member: discord.Member):
+    try:
+        await member.timeout(None)
+        await interaction.response.send_message(f"🔊 Communication routing restored for profile user {member.mention}.")
+    except Exception as e:
+        await interaction.response.send_message(f"❌ Execution failure: `{str(e)}`", ephemeral=True)
+
+@bot.tree.command(name="kick", description="Eject a problematic target user from server access.")
+@app_commands.checks.has_permissions(kick_members=True)
+async def kick(interaction: discord.Interaction, member: discord.Member, reason: str = "Unspecified"):
+    try:
+        await member.kick(reason=reason)
+        await interaction.response.send_message(f"👢 Kicked {member.name} successfully. Reason code: `{reason}`")
+    except Exception as e:
+        await interaction.response.send_message(f"❌ Command denied execution path: `{str(e)}`", ephemeral=True)
+
+@bot.tree.command(name="ban", description="Blacklist a user profile from the gateway node routing structures.")
+@app_commands.checks.has_permissions(ban_members=True)
+async def ban(interaction: discord.Interaction, member: discord.Member, reason: str = "Unspecified"):
+    try:
+        await member.ban(reason=reason)
+        await interaction.response.send_message(f"🔨 Banned user identity hash {member.name} cleanly. Reason: `{reason}`")
+    except Exception as e:
+        await interaction.response.send_message(f"❌ Execution pipeline blocked: `{str(e)}`", ephemeral=True)
+
+@bot.tree.command(name="purge", description="Bulk clear recent text traces from memory frames.")
+@app_commands.checks.has_permissions(manage_messages=True)
+async def purge(interaction: discord.Interaction, count: int):
+    if count < 1:
+        await interaction.response.send_message("❌ Parameter constraint failed. Count integer value must be >= 1.", ephemeral=True)
+        return
+    await interaction.response.defer(ephemeral=True)
+    deleted = await interaction.channel.purge(limit=count)
+    await interaction.followup.send(f"🗑️ Bulk cleanup sweep over. Extinguished `{len(deleted)}` old trace packages.")
+
+# ==============================================================================
+# 10. SLASH COMMAND CORE SET: INFORMATIONAL SYSTEMS & METRICS 
+# ==============================================================================
+@bot.tree.command(name="userinfo", description="Expose targeted registration signatures and identity status.")
+async def userinfo(interaction: discord.Interaction, member: discord.Member = None):
+    member = member or interaction.user
+    roles_str = ", ".join([r.mention for r in member.roles[1:15]]) or "No custom roles structural overrides found."
+    embed = discord.Embed(title=f"Identity Profile: {member.name}", color=member.color)
+    embed.add_field(name="Network Identity Handle", value=f"`{member.id}`", inline=True)
+    embed.add_field(name="Account Spawned", value=member.created_at.strftime("%Y-%m-%d"), inline=True)
+    embed.add_field(name="Gateway Gateway Node Entry", value=member.joined_at.strftime("%Y-%m-%d"), inline=True)
+    embed.add_field(name="Assigned Security Arrays", value=roles_str, inline=False)
+    embed.set_thumbnail(url=member.display_avatar.url)
+    await interaction.response.send_message(embed=embed)
+
+@bot.tree.command(name="serverinfo", description="Expose statistical architecture tracking telemetry data.")
+async def serverinfo(interaction: discord.Interaction):
+    g = interaction.guild
+    embed = discord.Embed(title=f"Architecture Report: {g.name}", color=discord.Color.blue())
+    embed.add_field(name="Structural ID", value=f"`{g.id}`", inline=True)
+    embed.add_field(name="Primary Owner Node", value=g.owner.mention if g.owner else "Null Reference", inline=True)
+    embed.add_field(name="Population Registry", value=f"Total: `{g.member_count}`", inline=True)
+    embed.add_field(name="Channel Subsections", value=f"Text: `{len(g.text_channels)}` | Voice: `{len(g.voice_channels)}`", inline=False)
+    if g.icon: embed.set_thumbnail(url=g.icon.url)
+    await interaction.response.send_message(embed=embed)
+
+@bot.tree.command(name="avatar", description="Extract the graphic assets source link for an active profile avatar.")
+async def avatar(interaction: discord.Interaction, member: discord.Member = None):
+    member = member or interaction.user
+    embed = discord.Embed(title=f"Graphic Source: {member.name}'s Avatar")
+    embed.set_image(url=member.display_avatar.url)
+    await interaction.response.send_message(embed=embed)
+
+# ==============================================================================
+# 11. SLASH COMMAND CORE SET: GAME ARENA & QUIZ STORAGE DRIVERS
 # ==============================================================================
 @bot.tree.command(name="create-quiz", description="Initialize a new empty quiz group (Admin Only)")
 @app_commands.checks.has_permissions(manage_messages=True)
 async def create_quiz(interaction: discord.Interaction, name: str):
     quiz_db = load_json_data(QUIZ_FILE)
     quiz_key = name.lower().replace(" ", "_")
-
     if quiz_key in quiz_db:
-        await interaction.response.send_message(f"❌ **'{name}'** naam se quiz pehle se hi exist karti hai!", ephemeral=True)
+        await interaction.response.send_message(f"❌ Key Constraint Error: Quiz identifier `{name}` exists.", ephemeral=True)
         return
-
     quiz_db[quiz_key] = {
         "title": name,
         "creator": interaction.user.name,
@@ -406,30 +535,26 @@ async def create_quiz(interaction: discord.Interaction, name: str):
         "questions": []
     }
     save_json_data(quiz_db, QUIZ_FILE)
-    await interaction.response.send_message(f"✅ **Quiz Created Successfully!**\nGroup Name: `{name}`\nAb aap `/add-question` use karke isme manually savaal daal sakte hain!")
+    await interaction.response.send_message(f"✅ **Database Index Generated!** Group: `{name}`. Add components with `/add-question`.")
 
 @bot.tree.command(name="add-question", description="Manually add a question, options, and correct answer (Admin Only)")
 @app_commands.checks.has_permissions(manage_messages=True)
 async def add_question(interaction: discord.Interaction, quiz_name: str, question: str, options: str, correct_answer: str):
     quiz_db = load_json_data(QUIZ_FILE)
     quiz_key = quiz_name.lower().replace(" ", "_")
-
     if quiz_key not in quiz_db:
-        await interaction.response.send_message(f"❌ Quiz `{quiz_name}` nahi mili! Pehle `/create-quiz` chalao.", ephemeral=True)
+        await interaction.response.send_message(f"❌ Data Query Error: Target Group `{quiz_name}` missing.", ephemeral=True)
         return
-
     await interaction.response.defer(ephemeral=False)
     try:
         parsed_options = [opt.strip() for opt in options.split(",")]
         correct_answer_clean = correct_answer.strip()
-
         if correct_answer_clean not in parsed_options:
-            await interaction.followup.send(f"❌ **Error:** Correct answer ({correct_answer_clean}) options se match nahi ho raha!")
+            await interaction.followup.send(f"❌ Matrix Validation Intercept: Correct choice mapping must exist inside options pool arrays!")
             return
         if len(parsed_options) < 2:
-            await interaction.followup.send("❌ **Error:** Kam se kam 2 options dena zaroori hai!")
+            await interaction.followup.send("❌ Error: Minimum structural option boundaries require length value >= 2")
             return
-
         parsed_question_entry = {
             "question": question,
             "options": parsed_options,
@@ -437,120 +562,72 @@ async def add_question(interaction: discord.Interaction, quiz_name: str, questio
         }
         quiz_db[quiz_key]["questions"].append(parsed_question_entry)
         save_json_data(quiz_db, QUIZ_FILE)
-
-        embed = discord.Embed(title=f"📝 Question Added Manually!", color=discord.Color.green())
-        embed.add_field(name="Quiz Group", value=quiz_db[quiz_key]["title"], inline=True)
-        embed.add_field(name="Total Questions Now", value=str(len(quiz_db[quiz_key]["questions"])), inline=True)
-        embed.add_field(name="💬 Question Statement", value=question, inline=False)
         
-        options_preview = ""
-        for idx, opt in enumerate(parsed_options, 1):
-            marker = "🔹"
-            if opt == correct_answer_clean: marker = "✅ (Correct)"
-            options_preview += f"{idx}. {opt} {marker}\n"
-            
-        embed.add_field(name="📋 Options Entered", value=options_preview, inline=False)
+        embed = discord.Embed(title=f"📝 Question Structured & Saved!", color=discord.Color.green())
+        embed.add_field(name="Target Index Group", value=quiz_db[quiz_key]["title"], inline=True)
+        embed.add_field(name="Question String", value=question, inline=False)
         await interaction.followup.send(embed=embed)
     except Exception as e:
-        await interaction.followup.send(f"❌ Question add karne mein dikkat aayi: `{str(e)}`")
+        await interaction.followup.send(f"❌ Exception safely isolated inside parse loop execution: `{str(e)}`")
 
 @bot.tree.command(name="remove-question", description="Remove a specific question from a quiz using its number (Admin Only)")
 @app_commands.checks.has_permissions(manage_messages=True)
 async def remove_question(interaction: discord.Interaction, quiz_name: str, question_number: int):
     quiz_db = load_json_data(QUIZ_FILE)
     quiz_key = quiz_name.lower().replace(" ", "_")
-
     if quiz_key not in quiz_db:
-        await interaction.response.send_message(f"❌ Quiz `{quiz_name}` nahi mili!", ephemeral=True)
+        await interaction.response.send_message(f"❌ Target context block tracking failure.", ephemeral=True)
         return
-
-    questions_list = quiz_db[quiz_key]["questions"]
-    total_q = len(questions_list)
-
-    if total_q == 0:
-        await interaction.response.send_message(f"❌ `{quiz_name}` mein koi question bacha hi nahi hai!", ephemeral=True)
+    q_list = quiz_db[quiz_key]["questions"]
+    if question_number < 1 or question_number > len(q_list):
+        await interaction.response.send_message("❌ Range evaluate limits matched exception flag out bounds.", ephemeral=True)
         return
-    if question_number < 1 or question_number > total_q:
-        await interaction.response.send_message(f"❌ Invalid question number! Total `{total_q}` questions hain.", ephemeral=True)
-        return
-
     await interaction.response.defer(ephemeral=False)
-    try:
-        removed_q = questions_list.pop(question_number - 1)
-        quiz_db[quiz_key]["questions"] = questions_list
-        save_json_data(quiz_db, QUIZ_FILE)
+    removed = q_list.pop(question_number - 1)
+    quiz_db[quiz_key]["questions"] = q_list
+    save_json_data(quiz_db, QUIZ_FILE)
+    await interaction.followup.send(f"🗑️ Purged question array index entry safely: \"{removed['question']}\"")
 
-        embed = discord.Embed(title="🗑️ Question Removed Successfully!", color=discord.Color.red())
-        embed.add_field(name="Quiz Group", value=quiz_db[quiz_key]["title"], inline=True)
-        embed.add_field(name="Removed Question #", value=str(question_number), inline=True)
-        embed.add_field(name="Remaining Questions", value=str(len(questions_list)), inline=True)
-        embed.add_field(name="💬 Removed Content", value=removed_q["question"], inline=False)
-        await interaction.followup.send(embed=embed)
-    except Exception as e:
-        await interaction.followup.send(f"❌ Question remove karne mein error aaya: `{str(e)}`")
-
-# ==============================================================================
-# 11. LIVE MULTIPLAYER QUIZ RUNTIME ENGINE COMMAND
-# ==============================================================================
 @bot.tree.command(name="start-quiz", description="Launch the Multiplayer Arena with live speed leaderboards (Admin Only)")
 @app_commands.checks.has_permissions(manage_messages=True)
 async def start_quiz(interaction: discord.Interaction, quiz_name: str):
     quiz_db = load_json_data(QUIZ_FILE)
     quiz_key = quiz_name.lower().replace(" ", "_")
-
     if quiz_key not in quiz_db or not quiz_db[quiz_key]["questions"]:
-        await interaction.response.send_message(f"❌ Quiz `{quiz_name}` nahi mili ya usme koi questions nahi hain!", ephemeral=True)
+        await interaction.response.send_message("❌ Matchmaker core blocked: Database empty or index configuration corrupted.", ephemeral=True)
         return
-
-    await interaction.response.send_message(f"🚀 **MULTIPLAYER ARENA ACTIVE!**\nQuiz: `{quiz_db[quiz_key]['title']}`\n\n⚡ **Rules:** Har question ke liye sirf **15 Seconds** milenge. Ready ho jao crew!", ephemeral=False)
+    await interaction.response.send_message(f"🚀 **MULTIPLAYER MATCHMAKING CORES ACTIVE!**\nArena Session: `{quiz_db[quiz_key]['title']}`\nTimer settings configured to **15 Seconds** per loop. Syncing thread blocks...", ephemeral=False)
     channel = interaction.channel
-
-    questions_list = quiz_db[quiz_key]["questions"]
+    q_list = quiz_db[quiz_key]["questions"]
     session_scoreboard = {}
 
-    for idx, q_item in enumerate(questions_list, 1):
-        q_text = q_item["question"]
-        opts = q_item["options"]
-        correct = q_item["correct"]
-
-        embed = discord.Embed(
-            title=f"❓ Question {idx} of {len(questions_list)}",
-            description=f"**{q_text}**",
-            color=discord.Color.blue()
-        )
-        embed.set_footer(text="Aapke paas sirf 15 seconds hain answer karne ke liye!")
-        
-        view = MultiQuizView(options=opts, correct_answer=correct, scoreboard=session_scoreboard)
+    for idx, q_item in enumerate(q_list, 1):
+        embed = discord.Embed(title=f"❓ Phase {idx} of {len(q_list)}", description=f"**{q_item['question']}**", color=discord.Color.blue())
+        view = MultiQuizView(options=q_item["options"], correct_answer=item_target := q_item["correct"], scoreboard=session_scoreboard)
         quiz_msg = await channel.send(embed=embed, view=view)
         
         await asyncio.sleep(15.0)
         view.stop()
         
         embed.color = discord.Color.gold()
-        embed.add_field(name="🎯 Correct Answer Was", value=f"👉 **{correct}**", inline=False)
+        embed.add_field(name="🎯 Correct Solution Resolved", value=f"👉 **{item_target}**", inline=False)
         await quiz_msg.edit(embed=embed, view=None)
 
         if session_scoreboard:
             sorted_scores = sorted(session_scoreboard.items(), key=lambda x: x[1]["points"], reverse=True)[:5]
-            lb_text = ""
-            for rank, (uid, u_data) in enumerate(sorted_scores, 1):
-                lb_text += f"🏅 **#{rank}** {u_data['name']} ➔ `{u_data['points']} pts`\n"
-            
-            lb_embed = discord.Embed(title=f"🏁 Leaderboard Standings (Round {idx})", description=lb_text, color=discord.Color.purple())
-            await channel.send(embed=lb_embed)
-        
+            lb_text = "".join([f"🏅 **#{r}** {d['name']} ➔ `{d['points']} pts`\n" for r, (uid, d) in enumerate(sorted_scores, 1)])
+            await channel.send(embed=discord.Embed(title=f"🏁 Session Leaderboard Framework State (Round {idx})", description=lb_text, color=discord.Color.purple()))
         await asyncio.sleep(4.0)
-
-    await channel.send("🏆 **QUIZ ARENA OVER!** Shabaash sabhi participants ko!")
+    await channel.send("🏆 **COMPILER LEAGUE ARENA TERMINATED.** Session state cleared smoothly from execution heap.")
 
 # ==============================================================================
-# 12. WEB SERVER FOR 24/7 PRODUCTION KEEP ALIVE
+# 12. RUNTIME KEEP-ALIVE NET NET ENGINE (WEB-FACING PROXY)
 # ==============================================================================
 app = Flask('')
 
 @app.route('/')
 def home():
-    return "Dhawal Bot Engine Operational 24/7!"
+    return "Dhawal Master Core Architecture Operational 24/7!"
 
 def run_web_server():
     port = int(os.environ.get("PORT", 8080))
@@ -561,10 +638,9 @@ def keep_alive():
     t.start()
 
 # ==============================================================================
-# 13. EXECUTION BLOCK FOR COMPILER ENVIRONMENT
+# 13. BOOT ENGINE INSTANTIATOR
 # ==============================================================================
 if __name__ == "__main__":
     keep_alive()
-    # Dynamic fetching from configuration block for safety
     TOKEN = os.getenv("DISCORD_BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
     bot.run(TOKEN)
