@@ -207,30 +207,7 @@ QUOTES = [
 ]
 
 # ==============================================================================
-# 6. TIME LOOPS & AUTO RECURRENT SYSTEM TASKS
-# ==============================================================================
-@tasks.loop(hours=2.0)
-async def bump_reminder_loop():
-    await bot.wait_until_ready()
-    for guild in bot.guilds:
-        bump_channel = get_flexible_channel(guild, ["bump", "bot-commands", "general"])
-        if bump_channel:
-            staff_role = discord.utils.get(guild.roles, name="Staff")
-            mention_text = staff_role.mention if staff_role else "@here"
-            
-            embed = discord.Embed(
-                title="⏰ SERVER BUMP TIMEOUT CYCLE ⏰",
-                description=f"Hey {mention_text}! **2 hours have elapsed.**\n\nUse your listings commands to sync visibility rankings!",
-                color=discord.Color.gold()
-            )
-            embed.set_footer(text="Automated Server Bump Dispatcher")
-            try:
-                await bump_channel.send(content=mention_text, embed=embed)
-            except Exception as e:
-                print(f"Task loop failed targeting channel assets: {e}")
-
-# ==============================================================================
-# 7. EVENT DECORATORS & LOW LEVEL AUTOMATION INTERCEPTORS
+# 6. EVENT DECORATORS & LOW LEVEL AUTOMATION INTERCEPTORS
 # ==============================================================================
 @bot.event
 async def on_ready():
@@ -238,9 +215,6 @@ async def on_ready():
     bot.add_view(ColorView())
     await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name="Abhi9av 👑"))
     
-    if not bump_reminder_loop.is_running():
-        bump_reminder_loop.start()
-        
     try:
         synced = await bot.tree.sync()
         print(f"Synced {len(synced)} slash commands into the system cache mapping.")
@@ -327,6 +301,7 @@ async def on_message_edit(before, after):
     history_db[str(before.id)] = {
         "guild_id": guild_id,
         "author": before.author.name,
+        "author_id": str(before.author.id),
         "before": before.content,
         "after": after.content,
         "timestamp": get_ist_time().strftime("%Y-%m-%d %I:%M:%S %p")
@@ -336,31 +311,22 @@ async def on_message_edit(before, after):
     save_json_data(history_db, SNIPE_FILE)
 
 # ==============================================================================
-# 8. SLASH COMMAND CORE SET: UTILITY & CUSTOM DEPLOYMENT PANELS
+# 7. SLASH COMMAND CORE SET: UTILITY, CUSTOM PANELS & LOG WRAPPERS
 # ==============================================================================
-@bot.tree.command(name="bump", description="Bump the server to boost rankings and visibility!")
-async def bump(interaction: discord.Interaction):
-    embed = discord.Embed(
-        title="🚀 SERVER BUMPED SUCCESSFULLY!",
-        description=f"Thank you {interaction.user.mention}! **{interaction.guild.name}** listings updated!\nNext automatic tracker alerts dispatched in 2 hours.",
-        color=discord.Color.green()
-    )
-    embed.set_thumbnail(url=interaction.guild.icon.url if interaction.guild.icon else None)
-    await interaction.response.send_message(embed=embed)
-
-@bot.tree.command(name="setup-colors", description="Kuch Bhi server ke liye custom color menu setup karein. (Admin Only)")
+@bot.tree.command(name="setup-colors", description="Kuch Bhi server ke liye custom color menu setup karne ka official panel.")
 @app_commands.checks.has_permissions(administrator=True)
 async def setup_colors(interaction: discord.Interaction):
     if interaction.guild_id != KUCH_BHI_SERVER_ID:
         await interaction.response.send_message("❌ This command routine is explicitly restricted to specific backend server grids.", ephemeral=True)
         return
+        
+    # FIXED: Direct implementation mapping instead of channel dispatch chain to prevent response failures.
     embed = discord.Embed(
         title="🌈 Kuch Bhi - Custom Color Picker Panel",
-        description="Select your desired identity color role setup using the multi-dropdown matrix arrays below.",
+        description="Select your desired identity color role setup using the multi-dropdown matrix arrays below.\n\nChoose any tone to map it instantly!",
         color=discord.Color.blurple()
     )
-    await interaction.response.send_message("Rendering layout structures...", ephemeral=True)
-    await interaction.channel.send(embed=embed, view=ColorView())
+    await interaction.response.send_message(embed=embed, view=ColorView())
 
 @bot.tree.command(name="snipe", description="Retrieve the last deleted message string from the runtime cache wrapper.")
 async def snipe(interaction: discord.Interaction):
@@ -374,8 +340,32 @@ async def snipe(interaction: discord.Interaction):
     embed.set_footer(text=f"Time: {data['timestamp']} (IST Zone Forced)")
     await interaction.response.send_message(embed=embed)
 
+@bot.tree.command(name="editlogs", description="Check historical updates and original message text prior to edit modifications.")
+async def editlogs(interaction: discord.Interaction, member: discord.Member):
+    history_db = load_json_data(SNIPE_FILE)
+    guild_id = str(interaction.guild.id)
+    target_user_id = str(member.id)
+    
+    found_log = None
+    # Scan latest entries backward to extract structural traces
+    for msg_id in reversed(list(history_db.keys())):
+        log = history_db[msg_id]
+        if log.get("guild_id") == guild_id and log.get("author_id") == target_user_id:
+            found_log = log
+            break
+            
+    if not found_log:
+        await interaction.response.send_message(f"✅ Zero trace adjustments: No edited frames found for {member.name} in state database.", ephemeral=True)
+        return
+        
+    embed = discord.Embed(title=f"📝 Message Edit Log Asset: {member.name}", color=discord.Color.blue())
+    embed.add_field(name="⏪ Original Form String", value=f"```\n{found_log['before']}\n```", inline=False)
+    embed.add_field(name="⏩ Modified Target State", value=f"```\n{found_log['after']}\n```", inline=False)
+    embed.set_footer(text=f"Timestamp: {found_log['timestamp']} (IST Matrix)")
+    await interaction.response.send_message(embed=embed)
+
 # ==============================================================================
-# 9. SLASH COMMAND CORE SET: MODERATION & USER PROTECTION COMMANDS
+# 8. SLASH COMMAND CORE SET: MODERATION & USER PROTECTION COMMANDS
 # ==============================================================================
 @bot.tree.command(name="warn", description="Issue a formal backend system warning to a server member.")
 @app_commands.checks.has_permissions(manage_messages=True)
@@ -485,7 +475,7 @@ async def purge(interaction: discord.Interaction, count: int):
     await interaction.followup.send(f"🗑️ Bulk cleanup sweep over. Extinguished `{len(deleted)}` old trace packages.")
 
 # ==============================================================================
-# 10. SLASH COMMAND CORE SET: INFORMATIONAL SYSTEMS & METRICS 
+# 9. SLASH COMMAND CORE SET: INFORMATIONAL SYSTEMS & METRICS 
 # ==============================================================================
 @bot.tree.command(name="userinfo", description="Expose targeted registration signatures and identity status.")
 async def userinfo(interaction: discord.Interaction, member: discord.Member = None):
@@ -518,7 +508,7 @@ async def avatar(interaction: discord.Interaction, member: discord.Member = None
     await interaction.response.send_message(embed=embed)
 
 # ==============================================================================
-# 11. SLASH COMMAND CORE SET: GAME ARENA & QUIZ STORAGE DRIVERS
+# 10. SLASH COMMAND CORE SET: GAME ARENA & QUIZ STORAGE DRIVERS
 # ==============================================================================
 @bot.tree.command(name="create-quiz", description="Initialize a new empty quiz group (Admin Only)")
 @app_commands.checks.has_permissions(manage_messages=True)
@@ -604,7 +594,6 @@ async def start_quiz(interaction: discord.Interaction, quiz_name: str):
     for idx, q_item in enumerate(q_list, 1):
         embed = discord.Embed(title=f"❓ Phase {idx} of {len(q_list)}", description=f"**{q_item['question']}**", color=discord.Color.blue())
         
-        # FIXED: Removed inline walrus operator assignment to prevent deployment syntax engine crashes
         item_target = q_item["correct"]
         view = MultiQuizView(options=q_item["options"], correct_answer=item_target, scoreboard=session_scoreboard)
         quiz_msg = await channel.send(embed=embed, view=view)
@@ -624,7 +613,7 @@ async def start_quiz(interaction: discord.Interaction, quiz_name: str):
     await channel.send("🏆 **COMPILER LEAGUE ARENA TERMINATED.** Session state cleared smoothly from execution heap.")
 
 # ==============================================================================
-# 12. RUNTIME KEEP-ALIVE NET NET ENGINE (WEB-FACING PROXY)
+# 11. RUNTIME KEEP-ALIVE NET NET ENGINE (WEB-FACING PROXY)
 # ==============================================================================
 app = Flask('')
 
@@ -641,7 +630,7 @@ def keep_alive():
     t.start()
 
 # ==============================================================================
-# 13. BOOT ENGINE INSTANTIATOR
+# 12. BOOT ENGINE INSTANTIATOR
 # ==============================================================================
 if __name__ == "__main__":
     keep_alive()
