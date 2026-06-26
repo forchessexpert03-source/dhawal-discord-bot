@@ -94,7 +94,6 @@ class ColorSelectMenu(discord.ui.Select):
         super().__init__(placeholder=placeholder, min_values=1, max_values=1, options=options, custom_id=custom_id)
 
     async def callback(self, interaction: discord.Interaction):
-        # GENERALIZED: Kuch bhi server restriction bypass removed here to prevent silent response failures
         await interaction.response.defer(ephemeral=True)
         guild = interaction.guild
         member = interaction.user
@@ -221,42 +220,43 @@ async def on_ready():
 async def on_member_join(member: discord.Member):
     guild = member.guild
     
-    # Optional logic fallback for generic routing
-    welcome_channel = get_flexible_channel(guild, "welcome")
-    if welcome_channel:
+    # Priority check for general-chat keywords first, then fallback to welcome keywords
+    channel = get_flexible_channel(guild, ["general", "general-chat", "chat"]) or bot.get_channel(WELCOME_CHANNEL_ID) or get_flexible_channel(guild, "welcome")
+    
+    if channel:
         total_members = len(guild.members)
-        quote_index = (total_members - 1) % len(QUOTES)
-        selected_quote = QUOTES[quote_index]
-
+        
+        # Suffix matching configuration framework logic
+        if total_members % 10 == 1 and total_members % 100 != 11: suffix = "st"
+        elif total_members % 10 == 2 and total_members % 100 != 12: suffix = "nd"
+        elif total_members % 10 == 3 and total_members % 100 != 13: suffix = "rd"
+        else: suffix = "th"
+            
         embed = discord.Embed(
-            title=f"Welcome to the Server, {member.name}! 🎉",
-            description=f"We are glad to have you here with us!\n\n✨ *{selected_quote}*",
-            color=discord.Color.from_rgb(114, 137, 218)
+            title="✨ New Member Alignment! ✨",
+            description=f"Hello {member.mention} Welcome to **Kuch Bhi**! 🎉\n\nWe are absolutely glad to have you here with us in our main core matrix mapping framework layer!",
+            color=discord.Color.from_rgb(255, 182, 193)
         )
+        
         color_channel = get_flexible_channel(guild, ["color", "colours"])
         if color_channel:
-            embed.add_field(name="🎨 Get Roles", value=f"Head over to {color_channel.mention} to grab your custom colors!", inline=False)
+            embed.add_field(name="🎨 Custom Visual Identity Roles", value=f"Head straight over to {color_channel.mention} to grab your custom dashboard colors instantly!", inline=False)
+            
         rules_channel = get_flexible_channel(guild, "rules")
         if rules_channel:
-            embed.add_field(name="📜 Server Rules", value=f"Make sure to check out {rules_channel.mention} to keep the community clean.", inline=False)
-
-        embed.set_thumbnail(url=member.display_avatar.url)
-        embed.set_footer(text=f"Member #{total_members}")
-        await welcome_channel.send(content=member.mention, embed=embed)
-        return
-
-    roles_to_add = []
-    lil_dawg_role = discord.utils.get(guild.roles, name="Lil Dawg")
-    newbies_role = discord.utils.get(guild.roles, name="Newbies")
-    
-    if lil_dawg_role: roles_to_add.append(lil_dawg_role)
-    if newbies_role: roles_to_add.append(newbies_role)
+            embed.add_field(name="📜 Operational Directives & Guidelines", value=f"Make sure to read through {rules_channel.mention} to ensure community compliance arrays are maintained cleanly.", inline=False)
+            
+        embed.set_footer(text=f"You're our {total_members}{suffix} member")
         
-    if roles_to_add:
-        try:
-            await member.add_roles(*roles_to_add)
-        except discord.Forbidden:
-            print("Join handler permissions hierarchy evaluation exception thrown.")
+        # Local media assets validation file stream logic
+        if os.path.exists("welcome.webp"):
+            file = discord.File("welcome.webp", filename="welcome.webp")
+            embed.set_image(url="attachment://welcome.webp")
+            await channel.send(content=member.mention, file=file, embed=embed)
+        else:
+            embed.set_thumbnail(url=member.display_avatar.url)
+            await channel.send(content=member.mention, embed=embed)
+        return
 
 @bot.event
 async def on_message_delete(message):
@@ -300,10 +300,27 @@ async def on_message_edit(before, after):
 # ==============================================================================
 # 7. SLASH COMMAND CORE SET: UTILITY, CUSTOM PANELS & LOG WRAPPERS
 # ==============================================================================
+@bot.tree.command(name="color-list", description="Uploads the structural custom colors identity preview sheet template illustration.")
+@app_commands.checks.has_permissions(administrator=True)
+async def color_list(interaction: discord.Interaction):
+    target_file = "color_list.webp"
+    if not os.path.exists(target_file):
+        await interaction.response.send_message("❌ Media Reference Failure: Local asset file designated `color_list.webp` not found in root storage matrix.", ephemeral=True)
+        return
+        
+    await interaction.response.defer()
+    file = discord.File(target_file, filename="color_list.webp")
+    embed = discord.Embed(
+        title="🎨 Kuch Bhi - Colors Ledger Selection Guide",
+        description="Review the reference identity mapping chart below to preview visual configuration values.",
+        color=discord.Color.from_rgb(47, 49, 54)
+    )
+    embed.set_image(url="attachment://color_list.webp")
+    await interaction.followup.send(file=file, embed=embed)
+
 @bot.tree.command(name="setup-colors", description="Custom color display menu dropdown setup engine panel.")
 @app_commands.checks.has_permissions(administrator=True)
 async def setup_colors(interaction: discord.Interaction):
-    # GENERALIZED: Allowed globally on any deployment nodes smoothly
     embed = discord.Embed(
         title="🌈 Custom Color Picker Panel",
         description="Select your desired identity color role setup using the multi-dropdown matrix arrays below.\n\nChoose any tone to map it instantly!",
