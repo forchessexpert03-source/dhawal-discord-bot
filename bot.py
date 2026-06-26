@@ -51,6 +51,7 @@ SNIPE_FILE = "snipe_logs.json"
 QUIZ_FILE = "quizzes.json"
 WARN_FILE = "warns.json"
 CONFIG_FILE = "server_configs.json"
+AFK_FILE = "afk_data.json"
 
 def get_ist_time():
     ist = pytz.timezone('Asia/Kolkata')
@@ -202,7 +203,7 @@ QUOTES = [
 ]
 
 # ==============================================================================
-# 6. EVENT DECORATORS & LOW LEVEL AUTOMATION INTERCEPTORS
+# 6. EVENT DECORATORS & INTERCEPTORS (WELCOME, SNIPE, AND AFK PROCESSING)
 # ==============================================================================
 @bot.event
 async def on_ready():
@@ -243,14 +244,13 @@ async def on_member_join(member: discord.Member):
         staff_role = discord.utils.get(guild.roles, name="Staff")
         staff_mention = staff_role.mention if staff_role else "@Staff"
         
-        # Outer text now includes both user mention AND staff role tag cleanly!
+        # Outer text includes user mention AND staff role tag
         outer_content_text = f"Welcome to Kuch Bhi Family 🤗 {member.mention} {staff_mention}"
         
-        # Embed description matching layout
+        # Embed description layout (Removed the Ping Staff line completely as requested!)
         clean_welcome_text = (
             f"Drop a hello {emoji_str}\n"
             f"Check out {rules_mention}\n"
-            f"Ping {staff_mention} if you need any help.\n"
             f"Have fun!\n\n"
             f"**You are our {total_members}{suffix} member!**"
         )
@@ -261,7 +261,6 @@ async def on_member_join(member: discord.Member):
         )
         embed.set_author(name=member.name, icon_url=member.display_avatar.url)
         
-        # Shifting the file stream to set_thumbnail puts the image on the right side cleanly
         if os.path.exists("welcome.webp"):
             file = discord.File("welcome.webp", filename="welcome.webp")
             embed.set_thumbnail(url="attachment://welcome.webp")
@@ -269,6 +268,49 @@ async def on_member_join(member: discord.Member):
         else:
             await channel.send(content=outer_content_text, embed=embed)
         return
+
+@bot.event
+async def on_message(message):
+    if message.author.bot or not message.guild: return
+
+    afk_db = load_json_data(AFK_FILE)
+    author_id = str(message.author.id)
+    guild_id = str(message.guild.id)
+
+    # 1. Check if the sender was AFK -> Remove AFK status
+    if guild_id in afk_db and author_id in afk_db[guild_id]:
+        # Reset nickname back if changed
+        original_name = afk_db[guild_id][author_id].get("original_name", message.author.display_name)
+        afk_db[guild_id].pop(author_id)
+        save_json_data(afk_db, AFK_FILE)
+        
+        try:
+            await message.author.edit(nick=original_name)
+        except discord.Forbidden:
+            pass # Ignore if bot lacks hierarchy permissions to edit owner/admin nickname
+
+        await message.channel.send(f"wb {message.author.mention}, maine aapka AFK status hata diya hai! 👋", delete_after=5)
+
+    # 2. Check if message mentions anyone who is currently AFK
+    if message.mentions:
+        for mentioned_user in message.mentions:
+            m_id = str(mentioned_user.id)
+            if guild_id in afk_db and m_id in afk_db[guild_id]:
+                reason = afk_db[guild_id][m_id]["reason"]
+                afk_time = afk_db[guild_id][m_id]["time"]
+                
+                # Calculate duration format
+                elapsed = int(time.time() - afk_time)
+                if elapsed < 60: duration_str = f"{elapsed}s ago"
+                elif elapsed < 3600: duration_str = f"{elapsed // 60}m ago"
+                else: duration_str = f"{elapsed // 3600}h ago"
+
+                await message.channel.send(
+                    f"💤 {mentioned_user.name} abhi AFK hain: **{reason}** ({duration_str})",
+                    reference=message
+                )
+
+    await bot.process_commands(message)
 
 @bot.event
 async def on_message_delete(message):
@@ -310,8 +352,34 @@ async def on_message_edit(before, after):
     save_json_data(history_db, SNIPE_FILE)
 
 # ==============================================================================
-# 7. SLASH COMMAND CORE SET: UTILITY, CUSTOM PANELS & LOG WRAPPERS
+# 7. SLASH COMMAND CORE SET: AFK & SERVER CUSTOM CHANNELS
 # ==============================================================================
+@bot.tree.command(name="afk", description="Set your profile status to Away From Keyboard with a custom reason.")
+async def afk(interaction: discord.Interaction, reason: str = "Working / Afk"):
+    afk_db = load_json_data(AFK_FILE)
+    user_id = str(interaction.user.id)
+    guild_id = str(interaction.guild.id)
+
+    if guild_id not in afk_db:
+        afk_db[guild_id] = {}
+
+    current_display_name = interaction.user.display_name
+    afk_db[guild_id][user_id] = {
+        "reason": reason,
+        "time": time.time(),
+        "original_name": current_display_name
+    }
+    save_json_data(afk_db, AFK_FILE)
+
+    # Change nickname to show [AFK] prefix cleanly
+    try:
+        new_nick = f"[AFK] {current_display_name}"[:32] # Discord limit is 32 chars
+        await interaction.user.edit(nick=new_nick)
+    except discord.Forbidden:
+        pass
+
+    await interaction.response.send_message(f"💤 {interaction.user.mention}, aap ab AFK hain: **{reason}**")
+
 @bot.tree.command(name="color-list", description="Uploads the structural custom colors identity preview sheet template illustration.")
 async def color_list(interaction: discord.Interaction):
     if not interaction.user.guild_permissions.administrator:
