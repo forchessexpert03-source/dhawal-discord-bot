@@ -220,35 +220,35 @@ async def on_ready():
 async def on_member_join(member: discord.Member):
     guild = member.guild
     
-    # Priority check for general-chat keywords first, then fallback to welcome keywords
+    # Priority check for general channels first, then falls back to welcome
     channel = get_flexible_channel(guild, ["general", "general-chat", "chat"]) or bot.get_channel(WELCOME_CHANNEL_ID) or get_flexible_channel(guild, "welcome")
     
     if channel:
-        total_members = len(guild.members)
+        # Dynamic Emoji Fetch for :Aquasmile:
+        aquasmile_emoji = discord.utils.get(guild.emojis, name="Aquasmile")
+        emoji_str = str(aquasmile_emoji) if aquasmile_emoji else "😊"
         
-        # Suffix matching configuration framework logic
-        if total_members % 10 == 1 and total_members % 100 != 11: suffix = "st"
-        elif total_members % 10 == 2 and total_members % 100 != 12: suffix = "nd"
-        elif total_members % 10 == 3 and total_members % 100 != 13: suffix = "rd"
-        else: suffix = "th"
-            
+        # Dynamic Mention Resolution for Roles
+        rules_channel = get_flexible_channel(guild, "rules")
+        rules_mention = rules_channel.mention if rules_channel else "#rules"
+        
+        staff_role = discord.utils.get(guild.roles, name="Staff")
+        staff_mention = staff_role.mention if staff_role else "@Staff"
+        
+        # Short Point-to-Point clean layout mapping requested by user
+        clean_welcome_text = (
+            f"Drop a hello {emoji_str} \n"
+            f"Check out {rules_mention} \n"
+            f"Ping {staff_mention} if you need any help \n"
+            f"Then Have fun!"
+        )
+        
         embed = discord.Embed(
-            title="✨ New Member Alignment! ✨",
-            description=f"Hello {member.mention} Welcome to **Kuch Bhi**! 🎉\n\nWe are absolutely glad to have you here with us in our main core matrix mapping framework layer!",
+            description=clean_welcome_text,
             color=discord.Color.from_rgb(255, 182, 193)
         )
         
-        color_channel = get_flexible_channel(guild, ["color", "colours"])
-        if color_channel:
-            embed.add_field(name="🎨 Custom Visual Identity Roles", value=f"Head straight over to {color_channel.mention} to grab your custom dashboard colors instantly!", inline=False)
-            
-        rules_channel = get_flexible_channel(guild, "rules")
-        if rules_channel:
-            embed.add_field(name="📜 Operational Directives & Guidelines", value=f"Make sure to read through {rules_channel.mention} to ensure community compliance arrays are maintained cleanly.", inline=False)
-            
-        embed.set_footer(text=f"You're our {total_members}{suffix} member")
-        
-        # Local media assets validation file stream logic
+        # Image embedded layout mapping logic (.webp fix applied safely)
         if os.path.exists("welcome.webp"):
             file = discord.File("welcome.webp", filename="welcome.webp")
             embed.set_image(url="attachment://welcome.webp")
@@ -301,8 +301,12 @@ async def on_message_edit(before, after):
 # 7. SLASH COMMAND CORE SET: UTILITY, CUSTOM PANELS & LOG WRAPPERS
 # ==============================================================================
 @bot.tree.command(name="color-list", description="Uploads the structural custom colors identity preview sheet template illustration.")
-@app_commands.checks.has_permissions(administrator=True)
 async def color_list(interaction: discord.Interaction):
+    # Admin Permission Bypass Validation Gate
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("❌ Admin Access Denied: You need the Administrator permission flag array to invoke this panel framework.", ephemeral=True)
+        return
+        
     target_file = "color_list.webp"
     if not os.path.exists(target_file):
         await interaction.response.send_message("❌ Media Reference Failure: Local asset file designated `color_list.webp` not found in root storage matrix.", ephemeral=True)
@@ -319,8 +323,12 @@ async def color_list(interaction: discord.Interaction):
     await interaction.followup.send(file=file, embed=embed)
 
 @bot.tree.command(name="setup-colors", description="Custom color display menu dropdown setup engine panel.")
-@app_commands.checks.has_permissions(administrator=True)
 async def setup_colors(interaction: discord.Interaction):
+    # Admin Permission Bypass Validation Gate
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("❌ Admin Access Denied: You need the Administrator permission flag array to invoke this panel framework.", ephemeral=True)
+        return
+        
     embed = discord.Embed(
         title="🌈 Custom Color Picker Panel",
         description="Select your desired identity color role setup using the multi-dropdown matrix arrays below.\n\nChoose any tone to map it instantly!",
