@@ -224,38 +224,50 @@ async def on_member_join(member: discord.Member):
     channel = get_flexible_channel(guild, ["general", "general-chat", "chat"]) or bot.get_channel(WELCOME_CHANNEL_ID) or get_flexible_channel(guild, "welcome")
     
     if channel:
+        total_members = len(guild.members)
+        
+        # Suffix handling logic for member count
+        if total_members % 10 == 1 and total_members % 100 != 11: suffix = "st"
+        elif total_members % 10 == 2 and total_members % 100 != 12: suffix = "nd"
+        elif total_members % 10 == 3 and total_members % 100 != 13: suffix = "rd"
+        else: suffix = "th"
+
         # Dynamic Emoji Fetch for :Aquasmile:
         aquasmile_emoji = discord.utils.get(guild.emojis, name="Aquasmile")
         emoji_str = str(aquasmile_emoji) if aquasmile_emoji else "😊"
         
-        # Dynamic Mention Resolution for Roles
+        # Dynamic Mention Resolution for Channels and Roles
         rules_channel = get_flexible_channel(guild, "rules")
         rules_mention = rules_channel.mention if rules_channel else "#rules"
         
         staff_role = discord.utils.get(guild.roles, name="Staff")
         staff_mention = staff_role.mention if staff_role else "@Staff"
         
-        # Short Point-to-Point clean layout mapping requested by user
+        # Outer mention message with hug emoji (Matches image_e49aef.png reference template)
+        outer_content_text = f"Welcome to Kuch Bhi Family 🤗 {member.mention}"
+        
+        # Embed description matching layout
         clean_welcome_text = (
-            f"Drop a hello {emoji_str} \n"
-            f"Check out {rules_mention} \n"
-            f"Ping {staff_mention} if you need any help \n"
-            f"Then Have fun!"
+            f"Drop a hello {emoji_str}\n"
+            f"Check out {rules_mention}\n"
+            f"Ping {staff_mention} if you need any help.\n"
+            f"Have fun!\n\n"
+            f"**You are our {total_members}{suffix} member!**"
         )
         
         embed = discord.Embed(
             description=clean_welcome_text,
             color=discord.Color.from_rgb(255, 182, 193)
         )
+        embed.set_author(name=member.name, icon_url=member.display_avatar.url)
         
-        # Image embedded layout mapping logic (.webp fix applied safely)
+        # Shifting the file stream to set_thumbnail puts the image on the right side cleanly
         if os.path.exists("welcome.webp"):
             file = discord.File("welcome.webp", filename="welcome.webp")
-            embed.set_image(url="attachment://welcome.webp")
-            await channel.send(content=member.mention, file=file, embed=embed)
+            embed.set_thumbnail(url="attachment://welcome.webp")
+            await channel.send(content=outer_content_text, file=file, embed=embed)
         else:
-            embed.set_thumbnail(url=member.display_avatar.url)
-            await channel.send(content=member.mention, embed=embed)
+            await channel.send(content=outer_content_text, embed=embed)
         return
 
 @bot.event
@@ -302,7 +314,6 @@ async def on_message_edit(before, after):
 # ==============================================================================
 @bot.tree.command(name="color-list", description="Uploads the structural custom colors identity preview sheet template illustration.")
 async def color_list(interaction: discord.Interaction):
-    # Admin Permission Bypass Validation Gate
     if not interaction.user.guild_permissions.administrator:
         await interaction.response.send_message("❌ Admin Access Denied: You need the Administrator permission flag array to invoke this panel framework.", ephemeral=True)
         return
@@ -324,7 +335,6 @@ async def color_list(interaction: discord.Interaction):
 
 @bot.tree.command(name="setup-colors", description="Custom color display menu dropdown setup engine panel.")
 async def setup_colors(interaction: discord.Interaction):
-    # Admin Permission Bypass Validation Gate
     if not interaction.user.guild_permissions.administrator:
         await interaction.response.send_message("❌ Admin Access Denied: You need the Administrator permission flag array to invoke this panel framework.", ephemeral=True)
         return
