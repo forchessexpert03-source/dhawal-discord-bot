@@ -243,8 +243,8 @@ async def on_member_join(member: discord.Member):
         staff_role = discord.utils.get(guild.roles, name="Staff")
         staff_mention = staff_role.mention if staff_role else "@Staff"
         
-        # Outer mention message with hug emoji (Matches image_e49aef.png reference template)
-        outer_content_text = f"Welcome to Kuch Bhi Family 🤗 {member.mention}"
+        # Outer text now includes both user mention AND staff role tag cleanly!
+        outer_content_text = f"Welcome to Kuch Bhi Family 🤗 {member.mention} {staff_mention}"
         
         # Embed description matching layout
         clean_welcome_text = (
@@ -303,7 +303,7 @@ async def on_message_edit(before, after):
         "author_id": str(before.author.id),
         "before": before.content,
         "after": after.content,
-        "timestamp": get_ist_time().strftime("%Y-%m-%d %I:%M:%S %p")
+        "timestamp": get_ist_time().strftime("%Y-%m-%d %I:%M %p")
     }
     if len(history_db) > 100:
         history_db.pop(list(history_db.keys())[0])
