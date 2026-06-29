@@ -96,7 +96,9 @@ def save_json_data(data, filename):
     except Exception as e:
         print(f"Database write error: {e}")
 
-snipe_data = {}
+# Upgraded Deep Snipe Storage Structure
+snipe_data = {}  # Dynamic multi-level tracking channel_id -> list of deleted msgs
+MAX_SNIPE_DEPTH = 20  # Store history trail up to 20 deleted messages deep per channel
 
 def get_flexible_channel(guild, keywords):
     if isinstance(keywords, str):
@@ -121,12 +123,15 @@ class ColorSelectMenu(discord.ui.Select):
         await interaction.response.defer(ephemeral=True)
         guild = interaction.guild
         member = interaction.user
-        selected_search = self.values[0].lower().strip(".")
+        
+        # Super clean string normalization
+        selected_search = self.values[0].lower().strip(". ").replace("mettalic", "metallic")
 
         # Clean removal routine matching case-insensitive variants
         roles_to_remove = [
             role for role in member.roles 
-            if role.name.lower().strip(".") in ALL_COLOR_NAMES and role.name.lower().strip(".") != selected_search
+            if role.name.lower().strip(". ").replace("mettalic", "metallic") in ALL_COLOR_NAMES 
+            and role.name.lower().strip(". ").replace("mettalic", "metallic") != selected_search
         ]
         if roles_to_remove:
             try:
@@ -135,9 +140,13 @@ class ColorSelectMenu(discord.ui.Select):
                 await interaction.followup.send("❌ Discord Hierarchy limits: Put Bot's role above all color roles!", ephemeral=True)
                 return
 
-        # Case-insensitive role matching to prevent failures seen in image_ad9cc0.png & image_ad9cdc.png
+        # Ultra flexible matching: checks startswith, substring, and reverse inclusion
         target_role = discord.utils.find(
-            lambda r: r.name.lower().strip(".").startswith(selected_search) or selected_search in r.name.lower(), 
+            lambda r: (
+                selected_search in r.name.lower() or 
+                r.name.lower().strip(". ").replace("mettalic", "metallic").startswith(selected_search) or
+                selected_search.startswith(r.name.lower().strip(". "))
+            ), 
             guild.roles
         )
 
@@ -152,7 +161,11 @@ class ColorSelectMenu(discord.ui.Select):
             except discord.Forbidden:
                 await interaction.followup.send("❌ Role addition failed. Verify internal permission flags.", ephemeral=True)
         else:
-            await interaction.followup.send(f"❌ Error: Visual role for '{self.values[0]}' missing from Server configurations.", ephemeral=True)
+            await interaction.followup.send(
+                f"❌ **Error:** Visual role for '{self.values[0]}' not found.\n"
+                f"💡 *Tip:* Make sure the role name on your Discord Server matches or contains the words **'{self.values[0].strip('.')}'**!", 
+                ephemeral=True
+            )
 
 class ColorView(discord.ui.View):
     def __init__(self):
@@ -310,13 +323,23 @@ async def on_message_delete(message):
     if was_edited:
         edit_note = f"\n*(⚠️ Note: Message was updated prior to deletion. State captured: \"{history_db[msg_id]['before']}\")*"
 
-    snipe_data[channel_id] = {
+    if channel_id not in snipe_data:
+        snipe_data[channel_id] = []
+
+    payload = {
         "content": message.content if message.content else "[Empty Layer or File Stream Embedded]",
         "author": message.author.name,
         "avatar": message.author.display_avatar.url,
         "timestamp": get_ist_time().strftime("%I:%M:%S %p"),
         "extra_info": edit_note
     }
+
+    # Insert at index 0 so position 1 is always the latest deleted message
+    snipe_data[channel_id].insert(0, payload)
+
+    # Restrict trail size up to 20 messages deep per channel
+    if len(snipe_data[channel_id]) > MAX_SNIPE_DEPTH:
+        snipe_data[channel_id].pop()
 
 @bot.event
 async def on_message_edit(before, after):
@@ -363,7 +386,6 @@ async def afk(interaction: discord.Interaction, reason: str = "Working / Afk"):
 @is_admin_or_booster()
 async def avatar(interaction: discord.Interaction, member: discord.Member = None):
     member = member or interaction.user
-    # Cleaned out "Graphic Source:" label prefix mapping as requested
     embed = discord.Embed(title=f"{member.name}'s Avatar", color=member.color)
     embed.set_image(url=member.display_avatar.url)
     await interaction.response.send_message(embed=embed)
@@ -395,16 +417,30 @@ async def setup_colors(interaction: discord.Interaction):
     )
     await interaction.response.send_message(embed=embed, view=ColorView())
 
-@bot.tree.command(name="snipe", description="Retrieve the last deleted message string from the runtime cache wrapper.")
-async def snipe(interaction: discord.Interaction):
+@bot.tree.command(name="snipe", description="Retrieve recent deleted messages by their history index sequence.")
+@app_commands.describe(index="The deleted message number to retrieve (e.g., 1 for last, 4 for 4th last)")
+async def snipe(interaction: discord.Interaction, index: int = 1):
     channel_id = str(interaction.channel.id)
-    if channel_id not in snipe_data:
+    
+    if channel_id not in snipe_data or not snipe_data[channel_id]:
         await interaction.response.send_message("❌ There are no recent text string deletions found in this tracking loop scope.", ephemeral=True)
         return
-    data = snipe_data[channel_id]
+
+    total_logs = len(snipe_data[channel_id])
+
+    if index < 1 or index > total_logs:
+        await interaction.response.send_message(
+            f"❌ **Index Out of Bounds!** Abhi is channel mein sirf pichle `{total_logs}` deleted messages ka record hai.\n"
+            f"Try checking a value between `1` and `{total_logs}`.", 
+            ephemeral=True
+        )
+        return
+
+    data = snipe_data[channel_id][index - 1]
+    
     embed = discord.Embed(description=f"{data['content']}{data['extra_info']}", color=discord.Color.red())
     embed.set_author(name=f"Deleted by: {data['author']}", icon_url=data['avatar'])
-    embed.set_footer(text=f"Time: {data['timestamp']} (IST Zone Forced)")
+    embed.set_footer(text=f"Position: {index}/{total_logs} Last Deleted | Time: {data['timestamp']} (IST Zone Forced)")
     await interaction.response.send_message(embed=embed)
 
 @bot.tree.command(name="editlogs", description="Check historical updates and original message text prior to edit modifications.")
