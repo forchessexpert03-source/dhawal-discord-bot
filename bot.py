@@ -22,7 +22,7 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 WELCOME_CHANNEL_ID = 876543210987654321  
 
-# Exact 32 custom colors registry matrix mapped properly split into 2 drops
+# Dictionary maps display labels to target role search strings
 COLOR_ROLES_1 = {
     "Crimson": "Crimson", "Hot pink": "Hot pink", "Magenta": "Magenta",
     "Yellow": "Yellow", "Chocolate": "Chocolate", "Aqua": "Aqua",
@@ -34,19 +34,42 @@ COLOR_ROLES_1 = {
 }
 
 COLOR_ROLES_2 = {
-    "Mettalic Bright...": "Mettalic Bright...", "Metallic Bronze": "Metallic Bronze",
-    "Metallic Choco ...": "Metallic Choco ...", "Metallic Beach ...": "Metallic Beach ...",
-    "Military Green": "Military Green", "Metallic Vermil...": "Metallic Vermil...",
-    "Matte Lime Gree.": "Matte Lime Gree.", "Minty Green": "Minty Green",
+    "Mettalic Bright...": "Mettalic Bright", "Metallic Bronze": "Metallic Bronze",
+    "Metallic Choco ...": "Metallic Choco", "Metallic Beach ...": "Metallic Beach",
+    "Military Green": "Military Green", "Metallic Vermil...": "Metallic Vermil",
+    "Matte Lime Gree.": "Matte Lime Gree", "Minty Green": "Minty Green",
     "Sandy Beige": "Sandy Beige", "Sugar Pink": "Sugar Pink",
     "Deep Mauve": "Deep Mauve", "paperteeth": "paperteeth"
 }
 
-ALL_COLOR_NAMES = list(COLOR_ROLES_1.values()) + list(COLOR_ROLES_2.values())
+ALL_COLOR_NAMES = [name.lower().strip(".") for name in list(COLOR_ROLES_1.values()) + list(COLOR_ROLES_2.values())]
 
 # ==============================================================================
-# 2. DATABASE ROUTINES, STATE STORAGE & IST TIME PRESETS
+# 2. HELPER FUNCTIONS & PERMISSION CHECKS
 # ==============================================================================
+def is_admin_or_staff():
+    """Check if the user is an administrator or has the 'Staff' role."""
+    async def predicate(interaction: discord.Interaction) -> bool:
+        if interaction.user.guild_permissions.administrator:
+            return True
+        staff_role = discord.utils.get(interaction.guild.roles, name="Staff")
+        if staff_role and staff_role in interaction.user.roles:
+            return True
+        await interaction.response.send_message("❌ Access Denied: This command can only be used by Admins or Moderation Staff.", ephemeral=True)
+        return False
+    return app_commands.check(predicate)
+
+def is_admin_or_booster():
+    """Check if the user is an administrator or a Server Booster."""
+    async def predicate(interaction: discord.Interaction) -> bool:
+        if interaction.user.guild_permissions.administrator:
+            return True
+        if hasattr(interaction.user, 'premium_since') and interaction.user.premium_since is not None:
+            return True
+        await interaction.response.send_message("❌ Access Denied: This command is exclusive to Admins and Server Boosters! 🚀", ephemeral=True)
+        return False
+    return app_commands.check(predicate)
+
 SNIPE_FILE = "snipe_logs.json"
 QUIZ_FILE = "quizzes.json"
 WARN_FILE = "warns.json"
@@ -71,7 +94,7 @@ def save_json_data(data, filename):
         with open(filename, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=4, ensure_ascii=False)
     except Exception as e:
-        print(f"Database write error on storage cluster: {e}")
+        print(f"Database write error: {e}")
 
 snipe_data = {}
 
@@ -84,7 +107,7 @@ def get_flexible_channel(guild, keywords):
     return None
 
 # ==============================================================================
-# 3. INTERACTIVE UI ELEMENTS & OVERLAPPING ROLES PROTECTION
+# 3. INTERACTIVE UI ELEMENTS (CASE INSENSITIVE SMART COLOR SEARCH)
 # ==============================================================================
 class ColorSelectMenu(discord.ui.Select):
     def __init__(self, placeholder, options_dict, custom_id):
@@ -98,9 +121,13 @@ class ColorSelectMenu(discord.ui.Select):
         await interaction.response.defer(ephemeral=True)
         guild = interaction.guild
         member = interaction.user
-        selected_color = self.values[0]
+        selected_search = self.values[0].lower().strip(".")
 
-        roles_to_remove = [role for role in member.roles if role.name in ALL_COLOR_NAMES and role.name != selected_color]
+        # Clean removal routine matching case-insensitive variants
+        roles_to_remove = [
+            role for role in member.roles 
+            if role.name.lower().strip(".") in ALL_COLOR_NAMES and role.name.lower().strip(".") != selected_search
+        ]
         if roles_to_remove:
             try:
                 await member.remove_roles(*roles_to_remove)
@@ -108,19 +135,24 @@ class ColorSelectMenu(discord.ui.Select):
                 await interaction.followup.send("❌ Discord Hierarchy limits: Put Bot's role above all color roles!", ephemeral=True)
                 return
 
-        target_role = discord.utils.get(guild.roles, name=selected_color)
+        # Case-insensitive role matching to prevent failures seen in image_ad9cc0.png & image_ad9cdc.png
+        target_role = discord.utils.find(
+            lambda r: r.name.lower().strip(".").startswith(selected_search) or selected_search in r.name.lower(), 
+            guild.roles
+        )
+
         if target_role:
             try:
                 if target_role in member.roles:
                     await member.remove_roles(target_role)
-                    await interaction.followup.send(f"🎨 Removed your **{selected_color}** color configuration.", ephemeral=True)
+                    await interaction.followup.send(f"🎨 Removed your **{target_role.name}** color configuration.", ephemeral=True)
                 else:
                     await member.add_roles(target_role)
-                    await interaction.followup.send(f"🎨 Success! Activated custom color shade **{selected_color}**.", ephemeral=True)
+                    await interaction.followup.send(f"🎨 Success! Activated custom color shade **{target_role.name}**.", ephemeral=True)
             except discord.Forbidden:
                 await interaction.followup.send("❌ Role addition failed. Verify internal permission flags.", ephemeral=True)
         else:
-            await interaction.followup.send(f"❌ Error: Visual role '{selected_color}' missing from Server configuration maps.", ephemeral=True)
+            await interaction.followup.send(f"❌ Error: Visual role for '{self.values[0]}' missing from Server configurations.", ephemeral=True)
 
 class ColorView(discord.ui.View):
     def __init__(self):
@@ -129,7 +161,7 @@ class ColorView(discord.ui.View):
         self.add_item(ColorSelectMenu("Pick Color (Part 2: 21-32)...", COLOR_ROLES_2, "general:color_select_2"))
 
 # ==============================================================================
-# 4. GAMING INTERFACE & TIMED MULTIPLAYER ENGINE COMPONENTS
+# 4. GAMING INTERFACE ENGINE COMPONENTS
 # ==============================================================================
 class MultiQuizView(discord.ui.View):
     def __init__(self, options, correct_answer, scoreboard):
@@ -177,40 +209,13 @@ class MultiQuizButton(discord.ui.Button):
             await interaction.response.send_message("❌ **Wrong Choice!** 0 points recorded for this frame.", ephemeral=True)
 
 # ==============================================================================
-# 5. DICTIONARIES, STRING CONSTANTS & QUOTE CACHE
-# ==============================================================================
-QUOTES = [
-    "“An early-morning walk is a blessing for the whole day.”",
-    "“The secret of getting ahead is getting started.”",
-    "“Opportunities don't happen, you create them.”",
-    "“Do what you can, with what you have, where you are.”",
-    "“Believe you can and you're halfway there.”",
-    "“The only way to do great work is to love what you do.”",
-    "“Act as if what you do makes a difference. It does.”",
-    "“Success is not final, failure is not fatal: it is the courage to continue that counts.”",
-    "“Never bend your head. Always hold it high. Look the world straight in the eye.”",
-    "“What you get by achieving your goals is not as important as what you become by achieving your goals.”",
-    "“You must do the things you think you cannot do.”",
-    "“Keep your face always toward the sunshine—and shadows will fall behind you.”",
-    "“Limit your 'always' and your 'nevers'.”",
-    "Hardships often prepare ordinary people for an extraordinary destiny.",
-    "“The big secret in life is that there is no big secret. Whatever your goal, you can get there if you are willing to work.”",
-    "“Grow through what you go through.”",
-    "“Be so good they can't ignore you.”",
-    "“Your talent determines what you can do. Your motivation determines how much you are willing to do.”",
-    "“Yesterday I was clever, so I wanted to change the world. Today I am wise, so I am changing myself.”",
-    "“The best way to predict your future is to create it.”"
-]
-
-# ==============================================================================
-# 6. EVENT DECORATORS & INTERCEPTORS (WELCOME, SNIPE, AND AFK PROCESSING)
+# 5. EVENT DECORATORS & INTERCEPTORS (WELCOME & AFK MANAGEMENT)
 # ==============================================================================
 @bot.event
 async def on_ready():
     print(f'🤖 {bot.user.name} Master Routing Cluster Bootstrapped successfully!')
     bot.add_view(ColorView())
     await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name="Abhi9av 👑"))
-    
     try:
         synced = await bot.tree.sync()
         print(f"Synced {len(synced)} slash commands into the system cache mapping.")
@@ -220,34 +225,26 @@ async def on_ready():
 @bot.event
 async def on_member_join(member: discord.Member):
     guild = member.guild
-    
-    # Priority check for general channels first, then falls back to welcome
     channel = get_flexible_channel(guild, ["general", "general-chat", "chat"]) or bot.get_channel(WELCOME_CHANNEL_ID) or get_flexible_channel(guild, "welcome")
     
     if channel:
         total_members = len(guild.members)
-        
-        # Suffix handling logic for member count
         if total_members % 10 == 1 and total_members % 100 != 11: suffix = "st"
         elif total_members % 10 == 2 and total_members % 100 != 12: suffix = "nd"
         elif total_members % 10 == 3 and total_members % 100 != 13: suffix = "rd"
         else: suffix = "th"
 
-        # Dynamic Emoji Fetch for :Aquasmile:
         aquasmile_emoji = discord.utils.get(guild.emojis, name="Aquasmile")
         emoji_str = str(aquasmile_emoji) if aquasmile_emoji else "😊"
         
-        # Dynamic Mention Resolution for Channels and Roles
         rules_channel = get_flexible_channel(guild, "rules")
         rules_mention = rules_channel.mention if rules_channel else "#rules"
         
         staff_role = discord.utils.get(guild.roles, name="Staff")
         staff_mention = staff_role.mention if staff_role else "@Staff"
         
-        # Outer text includes user mention AND staff role tag
         outer_content_text = f"Welcome to Kuch Bhi Family 🤗 {member.mention} {staff_mention}"
         
-        # Embed description layout (Removed the Ping Staff line completely as requested!)
         clean_welcome_text = (
             f"Drop a hello {emoji_str}\n"
             f"Check out {rules_mention}\n"
@@ -255,10 +252,7 @@ async def on_member_join(member: discord.Member):
             f"**You are our {total_members}{suffix} member!**"
         )
         
-        embed = discord.Embed(
-            description=clean_welcome_text,
-            color=discord.Color.from_rgb(255, 182, 193)
-        )
+        embed = discord.Embed(description=clean_welcome_text, color=discord.Color.from_rgb(255, 182, 193))
         embed.set_author(name=member.name, icon_url=member.display_avatar.url)
         
         if os.path.exists("welcome.webp"):
@@ -267,7 +261,6 @@ async def on_member_join(member: discord.Member):
             await channel.send(content=outer_content_text, file=file, embed=embed)
         else:
             await channel.send(content=outer_content_text, embed=embed)
-        return
 
 @bot.event
 async def on_message(message):
@@ -277,29 +270,22 @@ async def on_message(message):
     author_id = str(message.author.id)
     guild_id = str(message.guild.id)
 
-    # 1. Check if the sender was AFK -> Remove AFK status
     if guild_id in afk_db and author_id in afk_db[guild_id]:
-        # Reset nickname back if changed
         original_name = afk_db[guild_id][author_id].get("original_name", message.author.display_name)
         afk_db[guild_id].pop(author_id)
         save_json_data(afk_db, AFK_FILE)
-        
         try:
             await message.author.edit(nick=original_name)
         except discord.Forbidden:
-            pass # Ignore if bot lacks hierarchy permissions to edit owner/admin nickname
-
+            pass
         await message.channel.send(f"wb {message.author.mention}, maine aapka AFK status hata diya hai! 👋", delete_after=5)
 
-    # 2. Check if message mentions anyone who is currently AFK
     if message.mentions:
         for mentioned_user in message.mentions:
             m_id = str(mentioned_user.id)
             if guild_id in afk_db and m_id in afk_db[guild_id]:
                 reason = afk_db[guild_id][m_id]["reason"]
                 afk_time = afk_db[guild_id][m_id]["time"]
-                
-                # Calculate duration format
                 elapsed = int(time.time() - afk_time)
                 if elapsed < 60: duration_str = f"{elapsed}s ago"
                 elif elapsed < 3600: duration_str = f"{elapsed // 60}m ago"
@@ -309,7 +295,6 @@ async def on_message(message):
                     f"💤 {mentioned_user.name} abhi AFK hain: **{reason}** ({duration_str})",
                     reference=message
                 )
-
     await bot.process_commands(message)
 
 @bot.event
@@ -317,7 +302,6 @@ async def on_message_delete(message):
     if message.author.bot or not message.guild: return
     channel_id = str(message.channel.id)
     guild_id = str(message.guild.id)
-    
     history_db = load_json_data(SNIPE_FILE)
     msg_id = str(message.id)
     was_edited = msg_id in history_db and history_db[msg_id].get("guild_id") == guild_id
@@ -352,16 +336,14 @@ async def on_message_edit(before, after):
     save_json_data(history_db, SNIPE_FILE)
 
 # ==============================================================================
-# 7. SLASH COMMAND CORE SET: AFK & SERVER CUSTOM CHANNELS
+# 6. GENERAL UTILITIES, UTILS, & EXCLUSIVE AVATAR SYSTEMS
 # ==============================================================================
 @bot.tree.command(name="afk", description="Set your profile status to Away From Keyboard with a custom reason.")
 async def afk(interaction: discord.Interaction, reason: str = "Working / Afk"):
     afk_db = load_json_data(AFK_FILE)
     user_id = str(interaction.user.id)
     guild_id = str(interaction.guild.id)
-
-    if guild_id not in afk_db:
-        afk_db[guild_id] = {}
+    if guild_id not in afk_db: afk_db[guild_id] = {}
 
     current_display_name = interaction.user.display_name
     afk_db[guild_id][user_id] = {
@@ -370,27 +352,29 @@ async def afk(interaction: discord.Interaction, reason: str = "Working / Afk"):
         "original_name": current_display_name
     }
     save_json_data(afk_db, AFK_FILE)
-
-    # Change nickname to show [AFK] prefix cleanly
     try:
-        new_nick = f"[AFK] {current_display_name}"[:32] # Discord limit is 32 chars
+        new_nick = f"[AFK] {current_display_name}"[:32]
         await interaction.user.edit(nick=new_nick)
     except discord.Forbidden:
         pass
-
     await interaction.response.send_message(f"💤 {interaction.user.mention}, aap ab AFK hain: **{reason}**")
 
-@bot.tree.command(name="color-list", description="Uploads the structural custom colors identity preview sheet template illustration.")
+@bot.tree.command(name="avatar", description="Extract the graphic assets source link for an active profile avatar.")
+@is_admin_or_booster()
+async def avatar(interaction: discord.Interaction, member: discord.Member = None):
+    member = member or interaction.user
+    # Cleaned out "Graphic Source:" label prefix mapping as requested
+    embed = discord.Embed(title=f"{member.name}'s Avatar", color=member.color)
+    embed.set_image(url=member.display_avatar.url)
+    await interaction.response.send_message(embed=embed)
+
+@bot.tree.command(name="color-list", description="Uploads the structural custom colors identity preview sheet template.")
+@is_admin_or_staff()
 async def color_list(interaction: discord.Interaction):
-    if not interaction.user.guild_permissions.administrator:
-        await interaction.response.send_message("❌ Admin Access Denied: You need the Administrator permission flag array to invoke this panel framework.", ephemeral=True)
-        return
-        
     target_file = "color_list.webp"
     if not os.path.exists(target_file):
-        await interaction.response.send_message("❌ Media Reference Failure: Local asset file designated `color_list.webp` not found in root storage matrix.", ephemeral=True)
+        await interaction.response.send_message("❌ Media Reference Failure: Local asset file designated `color_list.webp` not found.", ephemeral=True)
         return
-        
     await interaction.response.defer()
     file = discord.File(target_file, filename="color_list.webp")
     embed = discord.Embed(
@@ -402,11 +386,8 @@ async def color_list(interaction: discord.Interaction):
     await interaction.followup.send(file=file, embed=embed)
 
 @bot.tree.command(name="setup-colors", description="Custom color display menu dropdown setup engine panel.")
+@is_admin_or_staff()
 async def setup_colors(interaction: discord.Interaction):
-    if not interaction.user.guild_permissions.administrator:
-        await interaction.response.send_message("❌ Admin Access Denied: You need the Administrator permission flag array to invoke this panel framework.", ephemeral=True)
-        return
-        
     embed = discord.Embed(
         title="🌈 Custom Color Picker Panel",
         description="Select your desired identity color role setup using the multi-dropdown matrix arrays below.\n\nChoose any tone to map it instantly!",
@@ -440,7 +421,7 @@ async def editlogs(interaction: discord.Interaction, member: discord.Member):
             break
             
     if not found_log:
-        await interaction.response.send_message(f"✅ Zero trace adjustments: No edited frames found for {member.name} in state database.", ephemeral=True)
+        await interaction.response.send_message(f"✅ Zero trace adjustments: No edited frames found for {member.name}.", ephemeral=True)
         return
         
     embed = discord.Embed(title=f"📝 Message Edit Log Asset: {member.name}", color=discord.Color.blue())
@@ -450,10 +431,10 @@ async def editlogs(interaction: discord.Interaction, member: discord.Member):
     await interaction.response.send_message(embed=embed)
 
 # ==============================================================================
-# 8. SLASH COMMAND CORE SET: MODERATION & USER PROTECTION COMMANDS
+# 7. STAFF ONLY ENFORCEMENT & MODERATION MODULES
 # ==============================================================================
 @bot.tree.command(name="warn", description="Issue a formal backend system warning to a server member.")
-@app_commands.checks.has_permissions(manage_messages=True)
+@is_admin_or_staff()
 async def warn(interaction: discord.Interaction, member: discord.Member, reason: str):
     warns_db = load_json_data(WARN_FILE)
     m_id = str(member.id)
@@ -484,7 +465,7 @@ async def views_warns(interaction: discord.Interaction, member: discord.Member):
     g_id = str(interaction.guild.id)
     
     if g_id not in warns_db or m_id not in warns_db[g_id] or not warns_db[g_id][m_id]:
-        await interaction.response.send_message(f"✅ Clean Slate: {member.name} contains zero moderation flags on this registry.", ephemeral=True)
+        await interaction.response.send_message(f"✅ Clean Slate: {member.name} contains zero moderation flags.", ephemeral=True)
         return
         
     embed = discord.Embed(title=f"📋 Enforcement Violation Log: {member.name}", color=discord.Color.yellow())
@@ -497,7 +478,7 @@ async def views_warns(interaction: discord.Interaction, member: discord.Member):
     await interaction.response.send_message(embed=embed)
 
 @bot.tree.command(name="clear-warns", description="Purge administrative infraction registries completely.")
-@app_commands.checks.has_permissions(administrator=True)
+@is_admin_or_staff()
 async def clear_warns(interaction: discord.Interaction, member: discord.Member):
     warns_db = load_json_data(WARN_FILE)
     m_id = str(member.id)
@@ -509,7 +490,7 @@ async def clear_warns(interaction: discord.Interaction, member: discord.Member):
     await interaction.response.send_message(f"🗑️ System cleanup: Warnings ledger cleared for {member.mention}.")
 
 @bot.tree.command(name="mute", description="Timeout an operational profile user across chat bands.")
-@app_commands.checks.has_permissions(moderate_members=True)
+@is_admin_or_staff()
 async def mute(interaction: discord.Interaction, member: discord.Member, minutes: int, reason: str = "Unspecified"):
     duration = datetime.timedelta(minutes=minutes)
     try:
@@ -523,7 +504,7 @@ async def mute(interaction: discord.Interaction, member: discord.Member, minutes
         await interaction.response.send_message(f"❌ Operation execution halted: `{str(e)}`", ephemeral=True)
 
 @bot.tree.command(name="unmute", description="Revoke communication isolation timeout rules early.")
-@app_commands.checks.has_permissions(moderate_members=True)
+@is_admin_or_staff()
 async def unmute(interaction: discord.Interaction, member: discord.Member):
     try:
         await member.timeout(None)
@@ -532,7 +513,7 @@ async def unmute(interaction: discord.Interaction, member: discord.Member):
         await interaction.response.send_message(f"❌ Execution failure: `{str(e)}`", ephemeral=True)
 
 @bot.tree.command(name="kick", description="Eject a problematic target user from server access.")
-@app_commands.checks.has_permissions(kick_members=True)
+@is_admin_or_staff()
 async def kick(interaction: discord.Interaction, member: discord.Member, reason: str = "Unspecified"):
     try:
         await member.kick(reason=reason)
@@ -540,8 +521,8 @@ async def kick(interaction: discord.Interaction, member: discord.Member, reason:
     except Exception as e:
         await interaction.response.send_message(f"❌ Command denied execution path: `{str(e)}`", ephemeral=True)
 
-@bot.tree.command(name="ban", description="Blacklist a user profile from the gateway node routing structures.")
-@app_commands.checks.has_permissions(ban_members=True)
+@bot.tree.command(name="ban", description="Blacklist a user profile from the server.")
+@is_admin_or_staff()
 async def ban(interaction: discord.Interaction, member: discord.Member, reason: str = "Unspecified"):
     try:
         await member.ban(reason=reason)
@@ -550,17 +531,17 @@ async def ban(interaction: discord.Interaction, member: discord.Member, reason: 
         await interaction.response.send_message(f"❌ Execution pipeline blocked: `{str(e)}`", ephemeral=True)
 
 @bot.tree.command(name="purge", description="Bulk clear recent text traces from memory frames.")
-@app_commands.checks.has_permissions(manage_messages=True)
+@is_admin_or_staff()
 async def purge(interaction: discord.Interaction, count: int):
     if count < 1:
-        await interaction.response.send_message("❌ Parameter constraint failed. Count integer value must be >= 1.", ephemeral=True)
+        await interaction.response.send_message("❌ Parameter constraint failed. Count value must be >= 1.", ephemeral=True)
         return
     await interaction.response.defer(ephemeral=True)
     deleted = await interaction.channel.purge(limit=count)
     await interaction.followup.send(f"🗑️ Bulk cleanup sweep over. Extinguished `{len(deleted)}` old trace packages.")
 
 # ==============================================================================
-# 9. SLASH COMMAND CORE SET: INFORMATIONAL SYSTEMS & METRICS 
+# 8. INFORMATIONAL LAYERS, METRICS & SERVER STATISTICS
 # ==============================================================================
 @bot.tree.command(name="userinfo", description="Expose targeted registration signatures and identity status.")
 async def userinfo(interaction: discord.Interaction, member: discord.Member = None):
@@ -569,7 +550,7 @@ async def userinfo(interaction: discord.Interaction, member: discord.Member = No
     embed = discord.Embed(title=f"Identity Profile: {member.name}", color=member.color)
     embed.add_field(name="Network Identity Handle", value=f"`{member.id}`", inline=True)
     embed.add_field(name="Account Spawned", value=member.created_at.strftime("%Y-%m-%d"), inline=True)
-    embed.add_field(name="Gateway Gateway Node Entry", value=member.joined_at.strftime("%Y-%m-%d"), inline=True)
+    embed.add_field(name="Gateway Node Entry", value=member.joined_at.strftime("%Y-%m-%d"), inline=True)
     embed.add_field(name="Assigned Security Arrays", value=roles_str, inline=False)
     embed.set_thumbnail(url=member.display_avatar.url)
     await interaction.response.send_message(embed=embed)
@@ -585,18 +566,11 @@ async def serverinfo(interaction: discord.Interaction):
     if g.icon: embed.set_thumbnail(url=g.icon.url)
     await interaction.response.send_message(embed=embed)
 
-@bot.tree.command(name="avatar", description="Extract the graphic assets source link for an active profile avatar.")
-async def avatar(interaction: discord.Interaction, member: discord.Member = None):
-    member = member or interaction.user
-    embed = discord.Embed(title=f"Graphic Source: {member.name}'s Avatar")
-    embed.set_image(url=member.display_avatar.url)
-    await interaction.response.send_message(embed=embed)
-
 # ==============================================================================
-# 10. SLASH COMMAND CORE SET: GAME ARENA & QUIZ STORAGE DRIVERS
+# 9. GAME ARENA MANAGEMENT ENGINE & QUIZ FLOW CONTROL
 # ==============================================================================
-@bot.tree.command(name="create-quiz", description="Initialize a new empty quiz group (Admin Only)")
-@app_commands.checks.has_permissions(manage_messages=True)
+@bot.tree.command(name="create-quiz", description="Initialize a new empty quiz group (Staff/Admin Only)")
+@is_admin_or_staff()
 async def create_quiz(interaction: discord.Interaction, name: str):
     quiz_db = load_json_data(QUIZ_FILE)
     quiz_key = name.lower().replace(" ", "_")
@@ -612,8 +586,8 @@ async def create_quiz(interaction: discord.Interaction, name: str):
     save_json_data(quiz_db, QUIZ_FILE)
     await interaction.response.send_message(f"✅ **Database Index Generated!** Group: `{name}`. Add components with `/add-question`.")
 
-@bot.tree.command(name="add-question", description="Manually add a question, options, and correct answer (Admin Only)")
-@app_commands.checks.has_permissions(manage_messages=True)
+@bot.tree.command(name="add-question", description="Manually add a question, options, and correct answer (Staff/Admin Only)")
+@is_admin_or_staff()
 async def add_question(interaction: discord.Interaction, quiz_name: str, question: str, options: str, correct_answer: str):
     quiz_db = load_json_data(QUIZ_FILE)
     quiz_key = quiz_name.lower().replace(" ", "_")
@@ -625,10 +599,10 @@ async def add_question(interaction: discord.Interaction, quiz_name: str, questio
         parsed_options = [opt.strip() for opt in options.split(",")]
         correct_answer_clean = correct_answer.strip()
         if correct_answer_clean not in parsed_options:
-            await interaction.followup.send(f"❌ Matrix Validation Intercept: Correct choice mapping must exist inside options pool arrays!")
+            await interaction.followup.send(f"❌ Matrix Validation Intercept: Correct choice mapping must exist inside options pool!")
             return
         if len(parsed_options) < 2:
-            await interaction.followup.send("❌ Error: Minimum structural option boundaries require length value >= 2")
+            await interaction.followup.send("❌ Error: Minimum structural options required length value >= 2")
             return
         parsed_question_entry = {
             "question": question,
@@ -645,8 +619,8 @@ async def add_question(interaction: discord.Interaction, quiz_name: str, questio
     except Exception as e:
         await interaction.followup.send(f"❌ Exception safely isolated inside parse loop execution: `{str(e)}`")
 
-@bot.tree.command(name="remove-question", description="Remove a specific question from a quiz using its number (Admin Only)")
-@app_commands.checks.has_permissions(manage_messages=True)
+@bot.tree.command(name="remove-question", description="Remove a specific question from a quiz using its number (Staff/Admin Only)")
+@is_admin_or_staff()
 async def remove_question(interaction: discord.Interaction, quiz_name: str, question_number: int):
     quiz_db = load_json_data(QUIZ_FILE)
     quiz_key = quiz_name.lower().replace(" ", "_")
@@ -663,22 +637,21 @@ async def remove_question(interaction: discord.Interaction, quiz_name: str, ques
     save_json_data(quiz_db, QUIZ_FILE)
     await interaction.followup.send(f"🗑️ Purged question array index entry safely: \"{removed['question']}\"")
 
-@bot.tree.command(name="start-quiz", description="Launch the Multiplayer Arena with live speed leaderboards (Admin Only)")
-@app_commands.checks.has_permissions(manage_messages=True)
+@bot.tree.command(name="start-quiz", description="Launch the Multiplayer Arena with live speed leaderboards (Staff/Admin Only)")
+@is_admin_or_staff()
 async def start_quiz(interaction: discord.Interaction, quiz_name: str):
     quiz_db = load_json_data(QUIZ_FILE)
     quiz_key = quiz_name.lower().replace(" ", "_")
     if quiz_key not in quiz_db or not quiz_db[quiz_key]["questions"]:
-        await interaction.response.send_message("❌ Matchmaker core blocked: Database empty or index configuration corrupted.", ephemeral=True)
+        await interaction.response.send_message("❌ Matchmaker core blocked: Database empty or index corrupted.", ephemeral=True)
         return
-    await interaction.response.send_message(f"🚀 **MULTIPLAYER MATCHMAKING CORES ACTIVE!**\nArena Session: `{quiz_db[quiz_key]['title']}`\nTimer settings configured to **15 Seconds** per loop. Syncing thread blocks...", ephemeral=False)
+    await interaction.response.send_message(f"🚀 **MULTIPLAYER MATCHMAKING CORES ACTIVE!**\nArena Session: `{quiz_db[quiz_key]['title']}`\nTimer settings configured to **15 Seconds**.", ephemeral=False)
     channel = interaction.channel
     q_list = quiz_db[quiz_key]["questions"]
     session_scoreboard = {}
 
     for idx, q_item in enumerate(q_list, 1):
         embed = discord.Embed(title=f"❓ Phase {idx} of {len(q_list)}", description=f"**{q_item['question']}**", color=discord.Color.blue())
-        
         item_target = q_item["correct"]
         view = MultiQuizView(options=q_item["options"], correct_answer=item_target, scoreboard=session_scoreboard)
         quiz_msg = await channel.send(embed=embed, view=view)
@@ -695,10 +668,10 @@ async def start_quiz(interaction: discord.Interaction, quiz_name: str):
             lb_text = "".join([f"🏅 **#{r}** {d['name']} ➔ `{d['points']} pts`\n" for r, (uid, d) in enumerate(sorted_scores, 1)])
             await channel.send(embed=discord.Embed(title=f"🏁 Session Leaderboard Framework State (Round {idx})", description=lb_text, color=discord.Color.purple()))
         await asyncio.sleep(4.0)
-    await channel.send("🏆 **COMPILER LEAGUE ARENA TERMINATED.** Session state cleared smoothly from execution heap.")
+    await channel.send("🏆 **COMPILER LEAGUE ARENA TERMINATED.** Session state cleared smoothly.")
 
 # ==============================================================================
-# 11. RUNTIME KEEP-ALIVE NET NET ENGINE (WEB-FACING PROXY)
+# 10. RUNTIME KEEP-ALIVE SYSTEM ENGINE
 # ==============================================================================
 app = Flask('')
 
@@ -715,7 +688,7 @@ def keep_alive():
     t.start()
 
 # ==============================================================================
-# 12. BOOT ENGINE INSTANTIATOR
+# 11. BOOT ENGINE INSTANTIATOR
 # ==============================================================================
 if __name__ == "__main__":
     keep_alive()
